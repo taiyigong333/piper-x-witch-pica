@@ -34,26 +34,26 @@ cameras: # 相机列表；可继续添加其他位置或其他已注册 driver �
   - name: camera_front # HDF5 相机名称；必须以 camera_ 开头，建议按位置命名。
     driver: realsense # 相机适配器名称；当前支持 realsense 和 mock。
     model: RealSense_D435 # 设备型号，会随轨迹写入 /camera_model。
-    serial_number: "待填写：D435 序列号" # 使用 discover-realsense 查询到的设备唯一序列号。
+    serial_number: "263022073726" # 使用 discover-realsense 查询到的设备唯一序列号。
     width: 640 # 彩色图宽度（像素）；保留设备原始输出，不在采集器内缩放。
     height: 480 # 彩色图高度（像素）。
     depth_width: 640 # 深度图宽度（像素）；depth=false 时保留也无影响。
     depth_height: 480 # 深度图高度（像素）。
     fps: 30 # 相机硬件流帧率（Hz）；必须不低于 acquisition.camera_rig_hz。
-    color_order: bgr # 彩色数组通道顺序：bgr 或 rgb；RealSense/OpenCV 默认使用 bgr。
+    color_order: rgb # 彩色数组通道顺序：bgr 或 rgb；RealSense/OpenCV 默认使用 bgr。
     enabled: true # 是否启动此相机；false 时该相机完全不参与采集。
     align_depth_to_color: true # depth=true 时是否由 SDK 将深度对齐到彩色图坐标系。
     base_to_camera: null # 现场标定的 4×4 齐次矩阵（采集参考 base -> 相机光学坐标系）；未知时保留 null，禁止伪造单位阵。
   - name: camera_wrist_right # HDF5 相机名称；D405 当前安装于右腕，按此位置命名。
     driver: realsense # 相机适配器名称；D405 与 D435 共用 RealSense 适配器。
     model: RealSense_D405 # 设备型号，会随轨迹写入 /camera_model。
-    serial_number: "待填写：D405 序列号" # 使用 discover-realsense 查询到的设备唯一序列号。
+    serial_number: "419122270341" # 使用 discover-realsense 查询到的设备唯一序列号。
     width: 640 # 彩色图宽度（像素）；请以实际设备支持的流配置为准。
     height: 480 # 彩色图高度（像素）。
     depth_width: 640 # 深度图宽度（像素）；须与实际启用的 D405 深度流匹配。
     depth_height: 480 # 深度图高度（像素）。
     fps: 30 # 相机硬件流帧率（Hz）；双相机时需检查 USB 带宽。
-    color_order: bgr # 彩色数组通道顺序：bgr 或 rgb。
+    color_order: rgb # 彩色数组通道顺序：bgr 或 rgb。
     enabled: true # 是否启动此相机；false 时不写入腕部相机数据。
     align_depth_to_color: true # depth=true 时是否将深度对齐到彩色图。
     base_to_camera: null # 腕部相机的现场 4×4 外参；更换支架、工具或相机后必须重新标定。
