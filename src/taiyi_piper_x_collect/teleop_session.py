@@ -27,6 +27,8 @@ import yaml
 
 from .collector import CollectionResult, DataCollector
 from .config import CollectConfig, load_config
+from .devices import create_camera
+from .devices.base import CameraDevice
 from .devices.piper_x_motion import PiperXInitialPoseController
 from .errors import CollectionError, ConfigurationError, DeviceError, HardwareDependencyError
 from .preflight import preflight
@@ -465,6 +467,76 @@ def _preflight_or_raise(config: CollectConfig) -> None:
         raise CollectionError(f"采集预检失败：{errors}")
 
 
+class CameraWarmup:
+    """在起始位姿和遥操准备期间持续取帧，但不创建任何采集文件。"""
+
+    def __init__(self, config: CollectConfig) -> None:
+        self._config = config
+        self._cameras: dict[str, CameraDevice] = {}
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
+
+    def start(self) -> None:
+        """打开相机并开始丢弃预热帧。"""
+
+        if self._thread is not None:
+            raise CollectionError("相机预热已经启动。")
+        try:
+            self._cameras = {camera.name: create_camera(camera) for camera in self._config.enabled_cameras}
+            for camera in self._cameras.values():
+                camera.start(capture_depth=self._config.modalities.depth)
+        except BaseException as error:
+            self.close()
+            raise CollectionError(f"相机预热启动失败：{type(error).__name__}: {error}") from error
+        self._thread = threading.Thread(target=self._discard_frames, name="camera-warmup", daemon=True)
+        self._thread.start()
+
+    def _discard_frames(self) -> None:
+        while not self._stop_event.is_set():
+            try:
+                for camera in self._cameras.values():
+                    if self._stop_event.is_set():
+                        return
+                    camera.read()
+            except BaseException as error:
+                if not self._stop_event.is_set():
+                    self._error = error
+                    self._stop_event.set()
+                return
+
+    def raise_if_error(self) -> None:
+        if self._error is not None:
+            raise CollectionError(f"相机预热失败：{type(self._error).__name__}: {self._error}") from self._error
+
+    def handoff(self) -> dict[str, CameraDevice]:
+        """停止预热线程并将已打开的相机交给采集器负责关闭。"""
+
+        self.raise_if_error()
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                raise CollectionError("相机预热线程未能在 2 秒内停止，拒绝开始录制。")
+        self.raise_if_error()
+        cameras = self._cameras
+        self._cameras = {}
+        return cameras
+
+    def close(self) -> None:
+        """异常路径关闭仍由预热器持有的相机。"""
+
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        for camera in self._cameras.values():
+            try:
+                camera.stop()
+            except Exception:
+                pass
+        self._cameras = {}
+
+
 def _delete_result(result: CollectionResult, config: CollectConfig) -> None:
     trajectory_dir = result.trajectory_path.parent.resolve()
     output_root = config.session.output_root.resolve()
@@ -581,7 +653,6 @@ def run_session(
     on_complete: str | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
-    show_calibration_reminder: bool = True,
 ) -> dict[str, Any]:
     """执行一条人工遥操轨迹，并返回保存或删除后的会话摘要。"""
 
@@ -590,30 +661,29 @@ def run_session(
     if on_complete not in {None, "save", "delete"}:
         raise ConfigurationError("on_complete 只支持 save、delete 或 null。")
 
-    if show_calibration_reminder:
-        _wait_for_space(
-            "已按现场情况完成基站校准（首次或基站、频道变更必须 force 校准）。",
-            input_fn=input_fn,
-            output_fn=output_fn,
-        )
     _preflight_or_raise(config)
     _wait_for_space(
-        "预检通过，已确认工作区无人且路径安全；下一步将由本项目移动 Piper 至配置的起始位姿。",
+        "预检通过。请确认已完成基站校准、工作区无人且路径安全；"
+        "下一步将启动相机预热并移动 Piper-X 至配置的起始位姿。",
         input_fn=input_fn,
         output_fn=output_fn,
     )
-    _move_to_initial_pose(config, output_fn)
 
     log_directory = config.session.output_root / "teleop_logs" / datetime.now().strftime("%Y%m%dT%H%M%S")
     teleop = ExternalTeleop(teleop_config)
+    warmup = CameraWarmup(config)
     stop_request = threading.Event()
     capture_stopped = threading.Event()
     result_box: dict[str, CollectionResult] = {}
     error_box: dict[str, BaseException] = {}
 
-    def collect() -> None:
+    def teleop_and_warmup_health() -> None:
+        _teleop_health_or_raise(teleop)
+        warmup.raise_if_error()
+
+    def collect(prestarted_cameras: dict[str, CameraDevice]) -> None:
         try:
-            result_box["result"] = DataCollector(config).run(
+            result_box["result"] = DataCollector(config, prestarted_cameras=prestarted_cameras).run(
                 duration_s=duration_s,
                 stop_request=stop_request,
                 capture_stopped=capture_stopped,
@@ -624,6 +694,9 @@ def run_session(
 
     collector_thread: threading.Thread | None = None
     try:
+        warmup.start()
+        _move_to_initial_pose(config, output_fn)
+        warmup.raise_if_error()
         teleop.run_pre_start()
         teleop.start(log_directory)
         _teleop_health_or_raise(teleop)
@@ -631,10 +704,16 @@ def run_session(
             "遥操节点已就绪。双击 Sense 夹爪启用遥操并确认 Piper 已跟随动作后，",
             input_fn=input_fn,
             output_fn=output_fn,
-            health_check=lambda: _teleop_health_or_raise(teleop),
+            health_check=teleop_and_warmup_health,
         )
         output_fn(f"遥操日志目录：{log_directory}")
-        collector_thread = threading.Thread(target=collect, name="teleop-data-collector", daemon=True)
+        prestarted_cameras = warmup.handoff()
+        collector_thread = threading.Thread(
+            target=collect,
+            args=(prestarted_cameras,),
+            name="teleop-data-collector",
+            daemon=True,
+        )
         collector_thread.start()
         _wait_for_space(
             "本条遥操内容已完成；保持 Sense 遥操运行并按空格结束数据采集，",
@@ -661,6 +740,7 @@ def run_session(
         stop_request.set()
         if collector_thread is not None and collector_thread.is_alive():
             collector_thread.join(timeout=30.0)
+        warmup.close()
         output_fn("正在关闭 Pika ROS 进程，请等待。")
         shutdown_report = teleop.stop()
         stage_summary = "; ".join(
@@ -707,7 +787,6 @@ def run_sessions(
                 on_complete=on_complete,
                 input_fn=input_fn,
                 output_fn=output_fn,
-                show_calibration_reminder=not repeat or not reports,
             )
         )
         if not repeat:

@@ -98,8 +98,20 @@ class PeriodicWorker(threading.Thread):
 
 
 class DataCollector:
-    def __init__(self, config: CollectConfig) -> None:
+    def __init__(
+        self,
+        config: CollectConfig,
+        *,
+        prestarted_cameras: dict[str, CameraDevice] | None = None,
+    ) -> None:
         self.config = config
+        expected_names = {camera.name for camera in config.enabled_cameras}
+        if prestarted_cameras is not None and set(prestarted_cameras) != expected_names:
+            raise CollectionError(
+                "预启动相机与采集配置不一致："
+                f"期望 {sorted(expected_names)}，实际 {sorted(prestarted_cameras)}。"
+            )
+        self._prestarted_cameras = prestarted_cameras
 
     def run(
         self,
@@ -175,11 +187,14 @@ class DataCollector:
                     continue
 
         try:
-            cameras = {camera.name: create_camera(camera) for camera in self.config.enabled_cameras}
+            cameras = self._prestarted_cameras or {
+                camera.name: create_camera(camera) for camera in self.config.enabled_cameras
+            }
             robot = create_robot(self.config.robot, self.config.session.pose_representation)
             gripper = create_gripper(self.config.gripper, robot) if self.config.modalities.gripper_position else None
-            for camera in cameras.values():
-                camera.start(capture_depth=self.config.modalities.depth)
+            if self._prestarted_cameras is None:
+                for camera in cameras.values():
+                    camera.start(capture_depth=self.config.modalities.depth)
             robot.start()
             if gripper is not None:
                 gripper.start()

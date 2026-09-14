@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import signal
+import time
 
 from taiyi_piper_x_collect.collector import CollectionStats
 from taiyi_piper_x_collect.config import load_config
@@ -134,10 +135,10 @@ def test_repeat_session_restarts_independent_trajectory(monkeypatch) -> None:
             {"result": "pass", "trajectory_id": "second", "action": "save"},
         ]
     )
-    calibration_reminders: list[bool] = []
+    session_calls: list[dict[str, object]] = []
 
     def fake_run_session(*args, **kwargs):
-        calibration_reminders.append(kwargs["show_calibration_reminder"])
+        session_calls.append(kwargs)
         return next(reports)
 
     monkeypatch.setattr(teleop_session, "run_session", fake_run_session)
@@ -149,7 +150,8 @@ def test_repeat_session_restarts_independent_trajectory(monkeypatch) -> None:
         input_fn=lambda _: next(answers),
     )
 
-    assert calibration_reminders == [True, False]
+    assert len(session_calls) == 2
+    assert all("show_calibration_reminder" not in call for call in session_calls)
     assert report["trajectory_count"] == 2
     assert [item["trajectory_id"] for item in report["sessions"]] == ["first", "second"]
 
@@ -184,6 +186,43 @@ def test_completion_action_allows_single_key_deletion(tmp_path: Path) -> None:
     assert "按 d 删除" in messages[0]
 
 
+def test_camera_warmup_discards_frames_and_handoffs_open_cameras(monkeypatch) -> None:
+    config = load_config(Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml")
+
+    class TrackingCamera:
+        def __init__(self) -> None:
+            self.start_calls = 0
+            self.read_calls = 0
+            self.stop_calls = 0
+
+        def start(self, *, capture_depth: bool) -> None:
+            self.start_calls += 1
+
+        def read(self) -> object:
+            self.read_calls += 1
+            time.sleep(0.002)
+            return object()
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    cameras = {camera.name: TrackingCamera() for camera in config.enabled_cameras}
+    monkeypatch.setattr(teleop_session, "create_camera", lambda camera: cameras[camera.name])
+    warmup = teleop_session.CameraWarmup(config)
+
+    warmup.start()
+    deadline = time.monotonic() + 1.0
+    while sum(camera.read_calls for camera in cameras.values()) < len(cameras) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    handed_off = warmup.handoff()
+    warmup.close()
+
+    assert handed_off == cameras
+    assert all(camera.start_calls == 1 for camera in cameras.values())
+    assert all(camera.read_calls > 0 for camera in cameras.values())
+    assert all(camera.stop_calls == 0 for camera in cameras.values())
+
+
 def test_session_starts_collection_only_after_teleop_confirmation(tmp_path: Path, monkeypatch) -> None:
     config_path = Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml"
     config = load_config(config_path)
@@ -210,9 +249,27 @@ def test_session_starts_collection_only_after_teleop_confirmation(tmp_path: Path
             events.append("teleop-stop")
             return {"stages": [], "remaining": []}
 
-    class FakeCollector:
+    class FakeWarmup:
         def __init__(self, _config) -> None:
-            pass
+            self.cameras = {"camera_front": object(), "camera_wrist_right": object()}
+
+        def start(self) -> None:
+            events.append("warmup-start")
+
+        def raise_if_error(self) -> None:
+            events.append("warmup-check")
+
+        def handoff(self):
+            events.append("warmup-handoff")
+            return self.cameras
+
+        def close(self) -> None:
+            events.append("warmup-close")
+
+    class FakeCollector:
+        def __init__(self, _config, *, prestarted_cameras) -> None:
+            assert set(prestarted_cameras) == {"camera_front", "camera_wrist_right"}
+            events.append("collector-init")
 
         def run(self, *, stop_request, capture_stopped, **_kwargs):
             events.append("collect-start")
@@ -230,20 +287,31 @@ def test_session_starts_collection_only_after_teleop_confirmation(tmp_path: Path
             )
 
     monkeypatch.setattr(teleop_session, "load_config", lambda _: config)
-    monkeypatch.setattr(teleop_session, "preflight", lambda _: {"result": "pass", "errors": []})
+    def fake_preflight(_config):
+        events.append("preflight")
+        return {"result": "pass", "errors": []}
+
+    monkeypatch.setattr(teleop_session, "preflight", fake_preflight)
     monkeypatch.setattr(teleop_session, "ExternalTeleop", FakeTeleop)
+    monkeypatch.setattr(teleop_session, "CameraWarmup", FakeWarmup)
+    monkeypatch.setattr(teleop_session, "_move_to_initial_pose", lambda *_: events.append("move-initial"))
     monkeypatch.setattr(teleop_session, "DataCollector", FakeCollector)
     monkeypatch.setattr(teleop_session, "load_teleop_config", lambda _: object())
-    answers = iter([" ", " ", " ", " ", " ", " "])
+    answers = iter([" ", " ", " ", " ", " "])
+    prompts: list[str] = []
 
     report = teleop_session.run_session(
         "collect.yaml",
         "teleop.yaml",
         input_fn=lambda _: next(answers),
-        output_fn=lambda _: None,
+        output_fn=prompts.append,
     )
 
     assert report["action"] == "save"
+    assert len([prompt for prompt in prompts if "预检通过" in prompt]) == 1
+    assert not any("已按现场情况完成基站校准" in prompt for prompt in prompts)
+    assert events.index("preflight") < events.index("warmup-start") < events.index("move-initial")
+    assert events.index("warmup-handoff") < events.index("collector-init") < events.index("collect-start")
     assert events.index("teleop-start") < events.index("collect-start") < events.index("teleop-stop")
     assert events.index("collect-finished") < events.index("teleop-stop")
 

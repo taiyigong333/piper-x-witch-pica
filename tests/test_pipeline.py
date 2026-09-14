@@ -9,6 +9,7 @@ import yaml
 
 from taiyi_piper_x_collect.collector import DataCollector
 from taiyi_piper_x_collect.config import load_config
+from taiyi_piper_x_collect.devices.mock import MockCamera
 from taiyi_piper_x_collect.preflight import preflight
 from taiyi_piper_x_collect.quality import validate_hdf5
 
@@ -88,3 +89,28 @@ def test_mock_collection_supports_xyz_rxryrz_tcp(tmp_path: Path) -> None:
     with h5py.File(result.trajectory_path, "r") as file:
         assert file["metadata/pose_representation"].asstr()[()] == "xyz_rxryrz"
         assert file["puppet/end_effector_single_pose_align/data"].shape[1] == 6
+
+
+def test_collection_reuses_prestarted_cameras_without_restart(tmp_path: Path) -> None:
+    config = load_config(_mock_config(tmp_path))
+
+    class CountingCamera(MockCamera):
+        def __init__(self, camera_config) -> None:
+            super().__init__(camera_config)
+            self.start_calls = 0
+
+        def start(self, capture_depth: bool) -> None:
+            self.start_calls += 1
+            if self.start_calls > 1:
+                raise AssertionError("采集器不应重新启动已预热的相机。")
+            super().start(capture_depth)
+
+    cameras = {camera.name: CountingCamera(camera) for camera in config.enabled_cameras}
+    for camera in cameras.values():
+        camera.start(capture_depth=config.modalities.depth)
+
+    result = DataCollector(config, prestarted_cameras=cameras).run(duration_s=0.3)
+
+    assert result.writer_report.trajectory_length > 0
+    assert all(camera.start_calls == 1 for camera in cameras.values())
+    assert all(not camera._started for camera in cameras.values())
