@@ -34,6 +34,17 @@ def test_fully_annotated_real_example_can_be_loaded() -> None:
     )
 
 
+def test_corn_in_plate_real_collection_config_can_be_loaded() -> None:
+    config_path = Path(__file__).parents[1] / "configs" / "pick_up_the_corn_and_put_it_on_the_plate.yaml"
+    config = load_config(config_path)
+
+    assert config.session.data_type == "real"
+    assert config.session.language_instruction == "pick up the corn and put it on the plate"
+    assert config.session.output_root == Path("/home/cv/gcj/data_collect/data/corn_in_plate")
+    assert [camera.serial_number for camera in config.enabled_cameras] == ["263022073726", "419122270341"]
+    assert config.robot.initial_pose.enabled
+
+
 def test_piper_x_accepts_native_euler_pose_schema(tmp_path: Path) -> None:
     config_path = tmp_path / "invalid.yaml"
     config_path.write_text(

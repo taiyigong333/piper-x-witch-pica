@@ -77,4 +77,4 @@ UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect teleop-session \
   --teleop-config configs/现场_pika_sense_piper_x.yaml --repeat
 ```
 
-See [docs/使用说明.md](docs/使用说明.md) for the operating sequence and safety boundaries.
+See [docs/使用说明.md](docs/使用说明.md) for the operating sequence and safety boundaries. The complete command-by-command procedure for the corn-to-plate task is in [docs/2026-09-15_01_实际采集逐指令操作说明.md](docs/2026-09-15_01_实际采集逐指令操作说明.md).

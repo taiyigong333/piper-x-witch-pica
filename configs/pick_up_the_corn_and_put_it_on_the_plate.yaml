@@ -1,0 +1,81 @@
+# Piper-X 实际数据采集任务：将玉米放到盘子上。
+# 此文件记录当前现场硬件和起始位姿。每次更换相机、工具、CAN 接口或任务前必须复核。
+session:
+  output_root: /home/cv/gcj/data_collect/data/corn_in_plate
+  data_type: real
+  language_instruction: "pick up the corn and put it on the plate"
+  collector_hash: "taiyigong"
+  format_version: "1.0.0"
+  duration_s: 60
+  pose_representation: xyz_rxryrz
+  hdf5:
+    queue_size: 256
+    batch_size: 16
+    flush_every_batches: 10
+    queue_put_timeout_s: 2.0
+    jpeg_quality: 95
+
+modalities:
+  rgb: true
+  depth: false
+  arm_joint_positions: true
+  tcp_pose: true
+  gripper_position: true
+
+acquisition:
+  robot_hz: 60
+  camera_rig_hz: 30
+  max_alignment_age_ms: 100
+
+cameras:
+  - name: camera_front
+    driver: realsense
+    model: RealSense_D435
+    serial_number: "263022073726"
+    width: 640
+    height: 480
+    depth_width: 640
+    depth_height: 480
+    fps: 30
+    color_order: rgb
+    enabled: true
+    align_depth_to_color: true
+    base_to_camera: null
+  - name: camera_wrist_right
+    driver: realsense
+    model: RealSense_D405
+    serial_number: "419122270341"
+    width: 640
+    height: 480
+    depth_width: 640
+    depth_height: 480
+    fps: 30
+    color_order: rgb
+    enabled: true
+    align_depth_to_color: true
+    base_to_camera: null
+
+robot:
+  name: piper_x
+  driver: piper_x
+  joint_count: 6
+  can_name: can0
+  firmware_version: default
+  tool_offset_m: [0.0, 0.0, 0.0]
+  base_to_robot: null
+  initial_pose:
+    # 2026-09-15 通过 read-piper-x-state 只读记录的当前关节位置。
+    # teleop-session 会在启动 ROS 前使能并低速移动至此姿态；现场不安全时请先改为 false。
+    enabled: true
+    mode: joint
+    joint_positions_rad: [0.0111352006, 0.8443379322, -1.0155198253, 1.1606788592, 0.0746477321, 0.0196698607]
+    tcp_pose: null
+    speed_percent: 10
+    timeout_s: 30
+    joint_tolerance_rad: 0.035
+    position_tolerance_m: 0.01
+    orientation_tolerance_rad: 0.1
+
+gripper:
+  enabled: true
+  driver: piper_x
