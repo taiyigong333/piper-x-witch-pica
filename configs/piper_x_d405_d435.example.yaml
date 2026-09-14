@@ -67,9 +67,9 @@ robot: # 机器人设备及 TCP 变换配置。
   tool_offset_m: [0.0, 0.0, 0.0] # TCP 相对 Piper-X 法兰末端的 [x, y, z] 偏移（m，J6 坐标系）。
   base_to_robot: null # 现场标定的 4×4 齐次矩阵（采集参考 base -> Piper-X 基座）。
   initial_pose: # 遥操会话在启动 ROS 前执行；只有 enabled=true 才会发送 CAN 控制帧。
-    enabled: false # 填好目标并完成现场安全检查后才设为 true。
+    enabled: true # 使用 2026-09-15 只读反馈记录的当前关节位置；执行前仍须完成现场安全检查。
     mode: joint # joint 使用六关节角 rad；tcp 使用 [x,y,z,rx,ry,rz] 的 m + rad。
-    joint_positions_rad: null # mode=joint 时填写长度 6 的关节角数组；tcp 模式时保持 null。
+    joint_positions_rad: [0.0111352006, 0.8443379322, -1.0155198253, 1.1606788592, 0.0746477321, 0.0196698607] # 读取时的 [J1..J6]，单位 rad。
     tcp_pose: null # mode=tcp 时填写长度 6 的 Piper-X TCP；joint 模式时保持 null。
     speed_percent: 10 # pyAgxArm 运动速度百分比，建议首次使用保持低速。
     timeout_s: 30 # 从使能到到位的最长等待秒数；超时后触发 SDK 电子急停并要求现场复位。

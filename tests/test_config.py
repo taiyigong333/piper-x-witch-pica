@@ -22,8 +22,16 @@ def test_fully_annotated_real_example_can_be_loaded() -> None:
     assert config.session.pose_representation == "xyz_rxryrz"
     assert config.modalities.gripper_position
     assert config.gripper.driver == "piper_x"
-    assert not config.robot.initial_pose.enabled
+    assert config.robot.initial_pose.enabled
     assert config.robot.initial_pose.mode == "joint"
+    assert config.robot.initial_pose.joint_positions_rad == (
+        0.0111352006,
+        0.8443379322,
+        -1.0155198253,
+        1.1606788592,
+        0.0746477321,
+        0.0196698607,
+    )
 
 
 def test_piper_x_accepts_native_euler_pose_schema(tmp_path: Path) -> None:
