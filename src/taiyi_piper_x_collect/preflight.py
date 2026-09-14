@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from typing import Any
 
 import numpy as np
@@ -11,6 +12,10 @@ from .config import CollectConfig
 from .devices import create_camera, create_gripper, create_robot
 from .devices.base import CameraDevice, GripperDevice, RobotDevice
 from .errors import DeviceError, HardwareDependencyError
+
+
+_ROBOT_FEEDBACK_TIMEOUT_S = 1.0
+_ROBOT_FEEDBACK_RETRY_INTERVAL_S = 0.02
 
 
 def discover_realsense() -> dict[str, Any]:
@@ -82,7 +87,7 @@ def preflight(config: CollectConfig) -> dict[str, Any]:
 
         robot = create_robot(config.robot, config.session.pose_representation)
         robot.start()
-        state = robot.read()
+        state = _read_robot_state_with_retry(robot)
         _validate_robot_state(state, config)
         report["devices"]["robot"] = {
             "name": config.robot.name,
@@ -114,6 +119,25 @@ def preflight(config: CollectConfig) -> dict[str, Any]:
         for camera in cameras.values():
             camera.stop()
     return report
+
+
+def _read_robot_state_with_retry(robot: RobotDevice) -> Any:
+    """等待 CAN 首帧，避免刚连接 Piper-X 时读取 pyAgxArm 的空反馈缓存。"""
+
+    deadline = time.monotonic() + _ROBOT_FEEDBACK_TIMEOUT_S
+    last_error: DeviceError | None = None
+    while True:
+        try:
+            return robot.read()
+        except DeviceError as error:
+            last_error = error
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0:
+            raise DeviceError(
+                f"等待 Piper-X 完整关节与法兰反馈超时（{_ROBOT_FEEDBACK_TIMEOUT_S:.1f} 秒）。"
+            f"最后错误：{last_error}"
+            ) from last_error
+        time.sleep(min(_ROBOT_FEEDBACK_RETRY_INTERVAL_S, remaining_s))
 
 
 def _validate_robot_state(state: Any, config: CollectConfig) -> None:
