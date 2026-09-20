@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 import time
 from typing import Any
 
@@ -62,9 +63,17 @@ def preflight(config: CollectConfig) -> dict[str, Any]:
     }
     try:
         for camera_config in config.enabled_cameras:
-            camera = create_camera(camera_config)
-            cameras[camera_config.name] = camera
-            camera.start(capture_depth=config.modalities.depth)
+            cameras[camera_config.name] = create_camera(camera_config)
+        # 预检也保持和正式预热一致的并行启动时序，便于发现 USB 带宽/设备竞争问题。
+        with ThreadPoolExecutor(max_workers=len(cameras), thread_name_prefix="camera-preflight-start") as executor:
+            futures = [
+                executor.submit(camera.start, capture_depth=config.modalities.depth)
+                for camera in cameras.values()
+            ]
+            for future in futures:
+                future.result()
+        for camera_config in config.enabled_cameras:
+            camera = cameras[camera_config.name]
             frame = camera.read()
             calibration = camera.calibration()
             if config.modalities.rgb and frame.color is None:

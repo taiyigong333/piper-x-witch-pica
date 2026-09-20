@@ -19,6 +19,7 @@ import subprocess
 import sys
 import termios
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import time
 import tty
 from typing import Any, Callable
@@ -484,8 +485,14 @@ class CameraWarmup:
             raise CollectionError("相机预热已经启动。")
         try:
             self._cameras = {camera.name: create_camera(camera) for camera in self._config.enabled_cameras}
-            for camera in self._cameras.values():
-                camera.start(capture_depth=self._config.modalities.depth)
+            # 两台相机必须同时开始出流，避免第二台相机的启动延迟造成不同步的预热窗口。
+            with ThreadPoolExecutor(max_workers=len(self._cameras), thread_name_prefix="camera-start") as executor:
+                futures = [
+                    executor.submit(camera.start, capture_depth=self._config.modalities.depth)
+                    for camera in self._cameras.values()
+                ]
+                for future in futures:
+                    future.result()
         except BaseException as error:
             self.close()
             raise CollectionError(f"相机预热启动失败：{type(error).__name__}: {error}") from error
@@ -806,6 +813,106 @@ def run_sessions(
             return {"result": "pass", "trajectory_count": len(reports), "sessions": reports}
 
 
+def run_reverse_recording_session(
+    config_path: str | Path,
+    teleop_config_path: str | Path,
+    *,
+    on_complete: str | None = None,
+    input_fn: Callable[[str], str] = input,
+    output_fn: Callable[[str], None] = print,
+) -> dict[str, Any]:
+    """在同一轮遥操和相机预热中连续录制正向、反向两条独立轨迹。"""
+
+    config = load_config(config_path)
+    teleop_config = load_teleop_config(teleop_config_path)
+    if on_complete not in {None, "save", "delete"}:
+        raise ConfigurationError("on_complete 只支持 save、delete 或 null。")
+    _preflight_or_raise(config)
+    _wait_for_space(
+        "预检通过。请确认工作区安全；下一步将预热两台相机并移动至起始位姿。",
+        input_fn=input_fn,
+        output_fn=output_fn,
+    )
+    log_directory = config.session.output_root / "teleop_logs" / datetime.now().strftime("%Y%m%dT%H%M%S")
+    teleop = ExternalTeleop(teleop_config)
+    warmup = CameraWarmup(config)
+    cameras: dict[str, CameraDevice] = {}
+    try:
+        warmup.start()
+        _move_to_initial_pose(config, output_fn)
+        teleop.run_pre_start()
+        teleop.start(log_directory)
+        _teleop_health_or_raise(teleop)
+        _wait_for_space(
+            "遥操已就绪。双击 Sense 夹爪启用遥操并确认跟随后按空格开始第一段录制。",
+            input_fn=input_fn,
+            output_fn=output_fn,
+            health_check=lambda: (warmup.raise_if_error(), _teleop_health_or_raise(teleop)),
+        )
+        cameras = warmup.handoff()
+        reports: list[dict[str, Any]] = []
+        for index, label in enumerate(("正向：夹取旋转红色方块并放入蓝色盘子", "反向：从蓝色盘子取出红色方块并放回旋转平台"), 1):
+            stop_request = threading.Event()
+            capture_stopped = threading.Event()
+            result_box: dict[str, CollectionResult] = {}
+            error_box: dict[str, BaseException] = {}
+
+            def collect() -> None:
+                try:
+                    result_box["result"] = DataCollector(config, prestarted_cameras=cameras).run(
+                        stop_request=stop_request,
+                        capture_stopped=capture_stopped,
+                        until_stopped=True,
+                        keep_cameras_open=True,
+                    )
+                except BaseException as error:
+                    error_box["error"] = error
+
+            collector_thread = threading.Thread(target=collect, name=f"reverse-recording-{index}", daemon=True)
+            collector_thread.start()
+            _wait_for_space(
+                f"{label}；完成后按空格停止第 {index} 段录制。",
+                input_fn=input_fn,
+                output_fn=output_fn,
+                health_check=lambda: (_teleop_health_or_raise(teleop), _raise_collection_error(error_box)),
+            )
+            stop_request.set()
+            if not capture_stopped.wait(timeout=3.0):
+                raise CollectionError("采集线程未在 3 秒内停止取帧。")
+            collector_thread.join(timeout=30.0)
+            _raise_collection_error(error_box)
+            result = result_box.get("result")
+            if result is None:
+                raise CollectionError("采集未返回结果。")
+            action = _completion_action(result, config, on_complete, input_fn=input_fn, output_fn=output_fn)
+            reports.append({"result": "pass", "action": action, "trajectory_id": result.trajectory_id, "trajectory_path": str(result.trajectory_path), "trajectory_length": result.writer_report.trajectory_length})
+            if index == 1:
+                _wait_for_space(
+                    "第一段已完成。保持相机和遥操运行，调整物块后按空格开始第二段录制。",
+                    input_fn=input_fn,
+                    output_fn=output_fn,
+                )
+        _wait_for_space(
+            "第二段已完成。双击 Sense 夹爪停止遥操后按空格结束会话。",
+            input_fn=input_fn,
+            output_fn=output_fn,
+        )
+        return {"result": "pass", "mode": "reverse_recording", "trajectory_count": 2, "sessions": reports}
+    finally:
+        for camera in cameras.values():
+            try:
+                camera.stop()
+            except Exception:
+                pass
+        warmup.close()
+        shutdown_report = teleop.stop()
+        stage_summary = "; ".join(
+            f"{stage['signal']} 等待 {stage['waited_s']:.1f}s，剩余 {','.join(stage['remaining']) or '无'}"
+            for stage in shutdown_report["stages"]
+        )
+        output_fn(f"Pika ROS 关闭结果：{stage_summary or '无需关闭进程'}。")
+
+
 def _parser() -> Any:
     import argparse
 
@@ -820,6 +927,7 @@ def _parser() -> Any:
     session.add_argument("--duration", type=float, help="可选采集上限（秒）；未设时由结束遥操确认收尾")
     session.add_argument("--on-complete", choices=("save", "delete"), help="完成后直接保留或删除；未设时单键选择")
     session.add_argument("--repeat", action="store_true", help="本条处理后按空格开始下一条独立轨迹")
+    session.add_argument("--reverse-recording", action="store_true", help="同一轮预热中连续录制正向和反向两段轨迹")
     return parser
 
 
@@ -831,12 +939,12 @@ def main(argv: list[str] | None = None) -> int:
             run_calibration(teleop_config, args.mode)
             print(json.dumps({"result": "pass", "mode": args.mode}, ensure_ascii=False))
             return 0
-        report = run_sessions(
-            args.config,
-            args.teleop_config,
-            duration_s=args.duration,
-            on_complete=args.on_complete,
-            repeat=args.repeat,
+        if args.reverse_recording and args.repeat:
+            raise ConfigurationError("--reverse-recording 与 --repeat 不能同时使用。")
+        report = (
+            run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete)
+            if args.reverse_recording
+            else run_sessions(args.config, args.teleop_config, duration_s=args.duration, on_complete=args.on_complete, repeat=args.repeat)
         )
         print(json.dumps(report, ensure_ascii=False))
         return 0

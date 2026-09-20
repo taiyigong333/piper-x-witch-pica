@@ -120,6 +120,7 @@ class DataCollector:
         stop_request: threading.Event | None = None,
         capture_stopped: threading.Event | None = None,
         until_stopped: bool = False,
+        keep_cameras_open: bool = False,
     ) -> CollectionResult:
         """执行一次采集。
 
@@ -128,6 +129,8 @@ class DataCollector:
         已停止遥操后，编排层才会请求采集器收尾并发布正式数据包。可选的
         ``capture_stopped`` 会在相机/机器人工作线程全部退出后置位，此时不会
         再有新的采样进入 HDF5 队列，但 HDF5 收尾和质量文件可能仍在进行。
+        ``keep_cameras_open`` 用于连续分段录制：本次轨迹结束后保留相机句柄，
+        由外层会话在所有分段完成后统一关闭。
         """
 
         duration = None if until_stopped else (duration_s if duration_s is not None else self.config.session.duration_s)
@@ -313,11 +316,12 @@ class DataCollector:
                     robot.stop()
                 except Exception:
                     pass
-            for camera in cameras.values():
-                try:
-                    camera.stop()
-                except Exception:
-                    pass
+            if not keep_cameras_open:
+                for camera in cameras.values():
+                    try:
+                        camera.stop()
+                    except Exception:
+                        pass
 
             if writer_process is not None:
                 if primary_error is None:
