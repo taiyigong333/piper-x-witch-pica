@@ -7,7 +7,13 @@
       "width": 640,
       "height": 480,
       "fps": 30,
-      "color_order": "rgb"
+      "color_order": "rgb",
+      "options": {
+        "exposure": 120.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0
+      }
     },
     {
       "name": "camera_wrist_right",
@@ -16,7 +22,13 @@
       "width": 640,
       "height": 480,
       "fps": 30,
-      "color_order": "rgb"
+      "color_order": "rgb",
+      "options": {
+        "exposure": 120.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0
+      }
     }
   ]
 }
