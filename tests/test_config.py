@@ -32,6 +32,8 @@ def test_fully_annotated_real_example_can_be_loaded() -> None:
         0.0746477321,
         0.0196698607,
     )
+    assert config.cameras[0].options["exposure"] == 120.0
+    assert config.cameras[0].options["white_balance"] == 4600.0
 
 
 def test_corn_in_plate_real_collection_config_can_be_loaded() -> None:

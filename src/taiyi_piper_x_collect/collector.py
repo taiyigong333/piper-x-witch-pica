@@ -221,6 +221,12 @@ class DataCollector:
             if self._prestarted_cameras is None:
                 for camera in cameras.values():
                     camera.start(capture_depth=self.config.modalities.depth)
+            # 设备启动后读取实际生效的 option，和输入参数一起保存到批次文件。
+            batch_record = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
+            batch_record["devices"] = {name: camera.parameters() for name, camera in cameras.items()}
+            batch_parameters_path.write_text(
+                json.dumps(batch_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
             robot.start()
             if gripper is not None:
                 gripper.start()

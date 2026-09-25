@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -77,6 +77,7 @@ class CameraConfig:
     depth_width: int | None = None
     depth_height: int | None = None
     base_to_camera: tuple[tuple[float, ...], ...] | None = None
+    options: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,18 @@ def _camera(value: Any, index: int) -> CameraConfig:
     color_order = str(raw.get("color_order", "bgr"))
     if color_order not in {"rgb", "bgr"}:
         raise ConfigurationError(f"{path}.color_order 只支持 rgb 或 bgr。")
+    raw_options = raw.get("options", {})
+    if not isinstance(raw_options, dict):
+        raise ConfigurationError(f"{path}.options 必须是对象。")
+    options: dict[str, float] = {}
+    for option_name, option_value in raw_options.items():
+        try:
+            numeric_value = float(option_value)
+        except (TypeError, ValueError) as error:
+            raise ConfigurationError(f"{path}.options.{option_name} 必须是数值。") from error
+        if not math.isfinite(numeric_value):
+            raise ConfigurationError(f"{path}.options.{option_name} 不能是 NaN 或 Inf。")
+        options[str(option_name)] = numeric_value
     return CameraConfig(
         name=name,
         driver=str(_required(raw, "driver", path)),
@@ -200,6 +213,7 @@ def _camera(value: Any, index: int) -> CameraConfig:
         depth_width=int(raw["depth_width"]) if raw.get("depth_width") is not None else None,
         depth_height=int(raw["depth_height"]) if raw.get("depth_height") is not None else None,
         base_to_camera=_matrix(raw.get("base_to_camera"), f"{path}.base_to_camera"),
+        options=options,
     )
 
 
@@ -316,6 +330,22 @@ def load_config(path: str | Path) -> CollectConfig:
     if not isinstance(cameras_raw, list):
         raise ConfigurationError("cameras 必须为列表。")
     cameras = tuple(_camera(value, index) for index, value in enumerate(cameras_raw))
+    if session_raw.get("camera_parameters_file"):
+        camera_path = session.camera_parameters_file
+        try:
+            parameter_payload = json.loads(camera_path.read_text(encoding="utf-8")) if camera_path else {}
+        except (OSError, json.JSONDecodeError) as error:
+            raise ConfigurationError(f"无法读取相机参数文件 {camera_path}：{error}") from error
+        parameter_cameras = parameter_payload.get("cameras") if isinstance(parameter_payload, dict) else None
+        if not isinstance(parameter_cameras, list):
+            raise ConfigurationError("相机参数文件必须包含 cameras 列表。")
+        parameter_by_name = {str(item.get("name")): item for item in parameter_cameras if isinstance(item, dict) and item.get("name")}
+        cameras = tuple(
+            replace(camera, options={str(k): float(v) for k, v in parameter_by_name.get(camera.name, {}).get("options", {}).items()})
+            if camera.name in parameter_by_name and isinstance(parameter_by_name[camera.name].get("options", {}), dict)
+            else camera
+            for camera in cameras
+        )
     enabled_cameras = tuple(camera for camera in cameras if camera.enabled)
     if not enabled_cameras:
         raise ConfigurationError("启用图像模态时至少需要一台 enabled 相机。")
