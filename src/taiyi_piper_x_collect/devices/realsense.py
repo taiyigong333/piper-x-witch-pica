@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from typing import Any
 
 from ..config import CameraConfig
 from ..errors import DeviceError, HardwareDependencyError
@@ -16,6 +17,7 @@ class RealSenseCamera(CameraDevice):
         self._pipeline = None
         self._align = None
         self._calibration = CameraCalibration()
+        self._parameters: dict[str, Any] = {}
 
     @staticmethod
     def _sdk():
@@ -44,6 +46,27 @@ class RealSenseCamera(CameraDevice):
                     int(self._config.fps),
                 )
             profile = pipeline.start(stream_config)
+            device = profile.get_device()
+            sensors: list[dict[str, Any]] = []
+            for sensor in device.query_sensors():
+                options: dict[str, Any] = {}
+                for option in sensor.get_supported_options():
+                    try:
+                        options[str(option)] = sensor.get_option(option)
+                    except Exception:
+                        options[str(option)] = None
+                sensors.append({"name": sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else "", "options": options})
+            self._parameters = {
+                "name": device.get_info(rs.camera_info.name),
+                "serial_number": device.get_info(rs.camera_info.serial_number),
+                "firmware_version": device.get_info(rs.camera_info.firmware_version),
+                "product_line": device.get_info(rs.camera_info.product_line),
+                "sensors": sensors,
+                "streams": {
+                    "color": {"width": self._config.width, "height": self._config.height, "fps": self._config.fps, "format": "bgr8"},
+                    "depth": {"enabled": capture_depth, "width": self._config.depth_width or self._config.width, "height": self._config.depth_height or self._config.height, "fps": self._config.fps, "format": "z16"},
+                },
+            }
             color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
             intrinsics = color_profile.get_intrinsics()
             self._calibration = CameraCalibration(
@@ -81,6 +104,9 @@ class RealSenseCamera(CameraDevice):
     def calibration(self) -> CameraCalibration:
         return self._calibration
 
+    def parameters(self) -> dict[str, Any]:
+        return dict(self._parameters)
+
     def stop(self) -> None:
         if self._pipeline is not None:
             try:
@@ -88,3 +114,4 @@ class RealSenseCamera(CameraDevice):
             finally:
                 self._pipeline = None
                 self._align = None
+                self._parameters = {}

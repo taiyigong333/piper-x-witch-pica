@@ -217,7 +217,7 @@ def _check_static_configuration(file: h5py.File, config: CollectConfig | None, w
         warnings.append("未配置 base_to_robot；无法直接进行采集参考 base 到机器人基座的转换。")
 
 
-def write_quality_report(path: str | Path, config: CollectConfig, stats: CollectionStats) -> Path:
+def write_quality_report(path: str | Path, config: CollectConfig, stats: CollectionStats, output_name: str = "quality.json") -> Path:
     trajectory_path = Path(path)
     report = validate_hdf5(trajectory_path, config)
     report.update(
@@ -229,7 +229,7 @@ def write_quality_report(path: str | Path, config: CollectConfig, stats: Collect
             "manual_review": {"status": "pending", "file": "manual_quality.json"},
         }
     )
-    output_path = trajectory_path.with_name("quality.json")
+    output_path = trajectory_path.with_name(output_name)
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return output_path
 
@@ -242,7 +242,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def create_manifest(trajectory_path: str | Path, quality_path: str | Path, trajectory_id: str, config: CollectConfig) -> Path:
+def create_manifest(trajectory_path: str | Path, quality_path: str | Path, trajectory_id: str, config: CollectConfig, output_name: str = "manifest.json") -> Path:
     """生成不包含自身校验和的 manifest 与交付文件校验表。"""
 
     trajectory = Path(trajectory_path)
@@ -264,8 +264,8 @@ def create_manifest(trajectory_path: str | Path, quality_path: str | Path, traje
         },
         "files": files,
     }
-    output_path = trajectory.with_name("manifest.json")
+    output_path = trajectory.with_name(output_name)
     output_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     checksums = "".join(f"{item['sha256']}  {item['name']}\n" for item in files)
-    trajectory.with_name("checksums.sha256").write_text(checksums, encoding="utf-8")
+    trajectory.with_name(f"{trajectory.stem}_checksums.sha256" if trajectory.stem != "trajectory" else "checksums.sha256").write_text(checksums, encoding="utf-8")
     return output_path

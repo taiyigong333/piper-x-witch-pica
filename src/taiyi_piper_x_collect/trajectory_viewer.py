@@ -21,6 +21,13 @@ from .errors import CollectionError
 
 
 _MAX_CHART_POINTS = 2_000
+_TRAJECTORY_NAMES = {"trajectory.hdf5", "normal_trajectory.hdf5", "reverse_trajectory.hdf5"}
+
+
+def _quality_path(trajectory_path: Path) -> Path:
+    return trajectory_path.with_name(
+        "quality.json" if trajectory_path.name == "trajectory.hdf5" else f"{trajectory_path.stem}_quality.json"
+    )
 
 
 @dataclass(frozen=True)
@@ -38,7 +45,7 @@ class TrajectoryViewer:
         """返回可打开轨迹，按最近修改时间倒序，且忽略未完成的 partial 文件。"""
 
         paths = sorted(
-            (path for path in self.root.rglob("trajectory.hdf5") if path.is_file()),
+            (path for path in self.root.rglob("*.hdf5") if path.is_file() and path.name in _TRAJECTORY_NAMES),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -54,6 +61,11 @@ class TrajectoryViewer:
             timestamps = _float_list(observations["timestamp"][:])
             is_intervene = _bool_list(observations["is_intervene"][:]) if "is_intervene" in observations else []
             cameras = sorted(observations.get("color_images", {}).keys())
+            channels = {
+                camera: _text(file["camera_color_channel"][camera][()])
+                for camera in cameras
+                if "camera_color_channel" in file and camera in file["camera_color_channel"]
+            }
             puppet = file.get("puppet")
             joints = _series_data(puppet, "arm_single_position_align")
             tcp = _series_data(puppet, "end_effector_single_pose_align")
@@ -65,11 +77,12 @@ class TrajectoryViewer:
             "frame_count": len(timestamps),
             "timestamps": timestamps,
             "cameras": cameras,
+            "camera_channels": channels,
             "is_intervene": is_intervene,
             "joint_positions": joints,
             "tcp_pose": tcp,
             "gripper_position": gripper,
-            "quality": _read_json(path.with_name("quality.json")),
+            "quality": _read_json(_quality_path(path)),
         }
 
     def read_frame(self, relative_path: str, camera: str, index: int) -> bytes:
@@ -92,8 +105,8 @@ class TrajectoryViewer:
             candidate.relative_to(self.root)
         except ValueError as error:
             raise ValueError("轨迹路径必须位于指定数据根目录内。") from error
-        if candidate.name != "trajectory.hdf5" or not candidate.is_file():
-            raise ValueError("未找到已完成的 trajectory.hdf5。")
+        if candidate.name not in _TRAJECTORY_NAMES or not candidate.is_file():
+            raise ValueError("未找到已完成的轨迹 HDF5。")
         return candidate
 
     def _trajectory_summary(self, path: Path) -> dict[str, Any]:
@@ -110,7 +123,8 @@ class TrajectoryViewer:
                 "modified_at": int(path.stat().st_mtime),
                 "error": f"无法读取 HDF5：{error}",
             }
-        quality = _read_json(path.with_name("quality.json"))
+        quality = _read_json(_quality_path(path))
+        direction = "normal" if path.name == "normal_trajectory.hdf5" else "reverse" if path.name == "reverse_trajectory.hdf5" else "single"
         return {
             "path": path.relative_to(self.root).as_posix(),
             "frame_count": frame_count,
@@ -118,6 +132,8 @@ class TrajectoryViewer:
             "instruction": metadata.get("language_instruction", ""),
             "collection_time": metadata.get("collection_time", ""),
             "quality_result": quality.get("result") if isinstance(quality, dict) else None,
+            "direction": direction,
+            "collection": path.parent.name,
         }
 
     @staticmethod
@@ -383,7 +399,7 @@ canvas { display: block; width: 100%; height: 190px; background: #fbfcfd; border
       <section class="panel"><div class="panel-header"><h2>关节角详细时序</h2><span class="quiet">合并对比与单轴细节</span></div><figure class="detail-chart joint-combined-chart"><figcaption>六关节角合并详细时序 (rad)</figcaption><div id="joint-combined-legend" class="chart-legend"></div><canvas id="joint-combined-detail-chart" data-series="joint_positions" data-columns="0,1,2,3,4,5" data-unit="rad" aria-label="六关节角合并详细时序图"></canvas></figure><div id="joint-detail-charts" class="detail-chart-grid"></div></section>
     </div>
   </section>
-  <section id="empty" class="panel empty" hidden>数据根目录内没有已完成的 trajectory.hdf5。</section>
+  <section id="empty" class="panel empty" hidden>数据根目录内没有已完成的轨迹 HDF5。</section>
 </main>
 <script>
 const state = { list: [], trajectory: null, index: 0, loadingTrajectory: false };
@@ -430,7 +446,8 @@ async function refreshList() {
     for (const item of state.list) {
       const option = document.createElement("option"); option.value = item.path;
       const quality = item.quality_result ? ` | 质检 ${item.quality_result}` : "";
-      option.textContent = `${item.collection_time || item.path} | ${item.frame_count} 帧${quality}`;
+      const direction = item.direction === "normal" ? "正向" : item.direction === "reverse" ? "逆向" : "单轨迹";
+      option.textContent = `${item.collection || ""} | ${direction} | ${item.collection_time || item.path} | ${item.frame_count} 帧${quality}`;
       select.append(option);
     }
     byId("empty").hidden = state.list.length > 0; byId("content").hidden = state.list.length === 0;
@@ -514,7 +531,7 @@ function renderCameraViews() {
   const views = byId("camera-views"); views.replaceChildren();
   for (const camera of state.trajectory.cameras) {
     const view = document.createElement("section"); view.className = "camera-view";
-    const name = document.createElement("div"); name.className = "camera-name"; name.textContent = camera;
+    const name = document.createElement("div"); name.className = "camera-name"; name.textContent = `${camera} | ${state.trajectory.camera_channels?.[camera] || "rgb"}`;
     const stage = document.createElement("div"); stage.className = "image-stage";
     const image = document.createElement("img"); image.className = "camera-image"; image.dataset.camera = camera; image.alt = `${camera} 当前帧`;
     stage.append(image); view.append(name, stage); views.append(view);
@@ -525,7 +542,8 @@ function renderFrame() {
   const data = state.trajectory; if (!data) return;
   const index = state.index; const joint = seriesValue(data.joint_positions, index); const tcp = seriesValue(data.tcp_pose, index); const gripper = seriesValue(data.gripper_position, index);
   byId("timeline").value = String(index);
-  byId("frame-label").textContent = `${index + 1} / ${data.frame_count} | ${format(elapsedAt(index), 3)} s${data.is_intervene[index] ? " | intervene" : ""}`;
+  const timestamp = data.timestamps[index];
+  byId("frame-label").textContent = `${index + 1} / ${data.frame_count} | 时间戳 ${format(timestamp, 6)} | ${format(elapsedAt(index), 3)} s${data.is_intervene[index] ? " | intervene" : ""}`;
   byId("joints").textContent = joint ? joint.map((value, i) => `J${i + 1}: ${format(value)}`).join("\n") : "未采集";
   byId("tcp").textContent = tcp ? tcp.map((value, i) => `${tcpValueLabels(data.metadata)[i]}: ${format(value)}`).join("\n") : "未采集";
   byId("gripper").textContent = gripper ? format(gripper[0], 6) : "未采集";

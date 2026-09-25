@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -23,6 +24,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
     collect = subparsers.add_parser("collect", help="按 YAML 配置采集并生成数据包")
     collect.add_argument("--config", required=True, help="YAML 配置路径")
+    collect.add_argument("--camera-config", help="本次采集使用的 JSON 相机参数文件")
     collect.add_argument("--duration", type=float, help="覆盖 session.duration_s（秒）")
     validate = subparsers.add_parser("validate", help="只读验证既有 trajectory.hdf5")
     validate.add_argument("hdf5_path", help="trajectory.hdf5 路径")
@@ -39,6 +41,7 @@ def _parser() -> argparse.ArgumentParser:
     calibrate.add_argument("--mode", choices=("force", "diagnose"), required=True, help="force 用于首次、硬件或频道变更")
     teleop_session = subparsers.add_parser("teleop-session", help="按安全顺序执行一条遥操-采集会话")
     teleop_session.add_argument("--config", required=True, help="采集 YAML 配置路径")
+    teleop_session.add_argument("--camera-config", help="本次采集使用的 JSON 相机参数文件")
     teleop_session.add_argument("--teleop-config", required=True, help="遥操 YAML 配置路径")
     teleop_session.add_argument("--duration", type=float, help="可选采集上限（秒）；未设时由结束遥操确认收尾")
     teleop_session.add_argument("--on-complete", choices=("save", "delete"), help="完成后直接保留或删除；未设时单键选择")
@@ -60,7 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "collect":
-            result = DataCollector(load_config(args.config)).run(args.duration)
+            config = load_config(args.config)
+            if args.camera_config:
+                config = replace(config, session=replace(config.session, camera_parameters_file=Path(args.camera_config).expanduser().resolve()))
+            result = DataCollector(config).run(args.duration)
             print(
                 json.dumps(
                     {
@@ -105,9 +111,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.reverse_recording and args.repeat:
                 raise ConfigurationError("--reverse-recording 与 --repeat 不能同时使用。")
             report = (
-                run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete)
+                run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete, camera_config_path=args.camera_config)
                 if args.reverse_recording
-                else run_sessions(args.config, args.teleop_config, duration_s=args.duration, on_complete=args.on_complete, repeat=args.repeat)
+                else run_sessions(args.config, args.teleop_config, duration_s=args.duration, on_complete=args.on_complete, repeat=args.repeat, camera_config_path=args.camera_config)
             )
             print(json.dumps(report, ensure_ascii=False))
             return 0

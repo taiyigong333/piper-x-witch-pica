@@ -1,0 +1,58 @@
+# Pika Sense + Piper-X 遥操会话配置。此文件只描述如何启动已有 ROS 遥操，
+# 与采集配置分离；修改遥操方式或替换机械臂时，新增本类配置而不要修改采集核心。
+
+# start_single_sensor_whit_teleop.bash 内含 sudo。会话先在当前终端验证凭据，
+# 后台传感器进程复用该终端的 sudo 凭据；其输出仍写入日志，不会占用正常空格确认。
+pre_start_command: "sudo -v"
+
+calibration:
+  # 首次使用本机、增减基站或切换频道后执行 force；命令可能交互式运行。
+  force_command: >-
+    cd ~/pika_ros/install/pika_locator/lib && ./survive-cli --force-calibrate
+  # 定位漂移或基站在使用中被移动时执行 diagnose；不会替代需要 force 的场景。
+  diagnose_command: >-
+    cd ~/pika_ros/install/pika_locator/lib && ./survive-cli
+
+# 仅由本项目编排层使用，不修改 pika_ros。controller 已 exec 到 ros2 launch，
+# 首轮只中断 launch 父进程；sensor 脚本会保留子 ros2 launch，首轮保持进程组中断。
+shutdown:
+  sigint_timeout_s: 1.0 # 可按现场收尾速度调整；三个超时都必须为正数。
+  sigterm_timeout_s: 1.0
+  sigkill_timeout_s: 1.0
+
+sensor:
+  name: pika_sense
+  shutdown_signal_scope: process_group
+  # 保持现有传感器启动脚本不变。子进程输出会写入每条会话的 teleop_logs/ 目录。
+  command: >-
+    source ~/pika_ros/install/setup.bash &&
+    cd ~/pika_ros/scripts &&
+    exec bash start_single_sensor_whit_teleop.bash
+  # 仅用于发现“命令立即退出”；不能证明定位或遥操链路已准备完成。
+  startup_wait_s: 3.0
+  required_log_patterns: ["serial Started"] # 串口节点必须在采集前完成启动。
+  failure_log_patterns: ["sudo: a terminal is required", "sudo: 需要密码"] # sudo 凭据失效时阻止会话继续。
+  failure_log_regexes: # 每条会话都需要 Sense RViz 用于确认定位状态；退出即阻止继续。
+    - '\[pika_single_locator_node-\d+]: process has died'
+    - '\[serial_gripper_imu-\d+]: process has died'
+    - '\[rviz2-\d+]: process has died'
+
+controller:
+  name: piper_x_controller
+  shutdown_signal_scope: parent
+  # conda 在非交互 bash 中不一定已初始化，故显式加载 conda.sh；不修改 ROS launch 文件。
+  command: >-
+    source ~/pika_ros/install/setup.bash &&
+    source ~/miniconda3/etc/profile.d/conda.sh &&
+    conda activate pika &&
+    export PYTHONPATH=$CONDA_PREFIX/lib/python3.10/site-packages:$PYTHONPATH &&
+    exec ros2 launch pika_remote_agx_arm teleop_single_piper_x.launch.py
+  startup_wait_s: 5.0
+  # 编排层会移除 uv 的 VIRTUAL_ENV/PYTHONPATH，令此命令使用 pika 的 Python 3.10。
+  required_log_patterns: ["agx_arm_ctrl_single", "arm_ik_pose_node.py", "pub_delta_pose.py"]
+  failure_log_patterns: ["Traceback (most recent call last)", "ModuleNotFoundError"]
+  failure_log_regexes: # 每条会话都需要 Piper-X RViz 用于确认遥操状态；退出即阻止继续。
+    - '\[agx_arm_ctrl_single-\d+]: process has died'
+    - '\[arm_ik_pose_node.py-\d+]: process has died'
+    - '\[pub_delta_pose.py-\d+]: process has died'
+    - '\[rviz2-\d+]: process has died'

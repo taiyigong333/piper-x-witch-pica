@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import hashlib
+import json
 import math
 from pathlib import Path
 from typing import Any, Literal
@@ -44,6 +46,8 @@ class SessionConfig:
     collector_hash: str
     format_version: str = "1.0.0"
     trajectory_id: str | None = None
+    batch_tag: int = 1
+    camera_parameters_file: Path | None = None
     duration_s: float | None = None
     sim_assets: str | None = None
     pose_representation: PoseRepresentation = "xyz_xyzw"
@@ -258,6 +262,9 @@ def load_config(path: str | Path) -> CollectConfig:
     output_root = Path(str(_required(session_raw, "output_root", "session")))
     if not output_root.is_absolute():
         output_root = (source_path.parent / output_root).resolve()
+    batch_tag_value = _positive_number(session_raw.get("batch_tag", 1), "session.batch_tag")
+    if not batch_tag_value.is_integer():
+        raise ConfigurationError("session.batch_tag 必须是正整数。")
     session = SessionConfig(
         output_root=output_root,
         data_type=data_type,  # type: ignore[arg-type]
@@ -265,6 +272,12 @@ def load_config(path: str | Path) -> CollectConfig:
         collector_hash=str(_required(session_raw, "collector_hash", "session")),
         format_version=str(session_raw.get("format_version", "1.0.0")),
         trajectory_id=str(session_raw["trajectory_id"]) if session_raw.get("trajectory_id") else None,
+        batch_tag=int(batch_tag_value),
+        camera_parameters_file=(
+            (source_path.parent / str(session_raw["camera_parameters_file"])).resolve()
+            if session_raw.get("camera_parameters_file") and not Path(str(session_raw["camera_parameters_file"])).is_absolute()
+            else (Path(str(session_raw["camera_parameters_file"])).expanduser().resolve() if session_raw.get("camera_parameters_file") else None)
+        ),
         duration_s=_positive_number(session_raw["duration_s"], "session.duration_s") if session_raw.get("duration_s") is not None else None,
         sim_assets=str(session_raw["sim_assets"]) if session_raw.get("sim_assets") else None,
         pose_representation=pose_representation,  # type: ignore[arg-type]
@@ -349,3 +362,22 @@ def load_config(path: str | Path) -> CollectConfig:
         raise ConfigurationError("gripper.driver=piper_x 必须与 robot.driver=piper_x 一起使用。")
 
     return CollectConfig(session, modalities, acquisition, cameras, robot, gripper, source_path)
+
+
+def camera_parameters_payload(config: CollectConfig) -> dict[str, Any]:
+    """读取本次采集声明的相机参数文件，缺失时使用配置快照。"""
+    path = config.session.camera_parameters_file
+    if path is None:
+        return {"cameras": [{key: value for key, value in camera.__dict__.items()} for camera in config.cameras]}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise ConfigurationError(f"无法读取相机参数文件 {path}：{error}") from error
+    if not isinstance(payload, dict):
+        raise ConfigurationError(f"相机参数文件必须是 JSON 对象：{path}")
+    return payload
+
+
+def camera_parameters_digest(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

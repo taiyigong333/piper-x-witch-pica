@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 import multiprocessing as mp
+import json
 from pathlib import Path
 from queue import Empty, Full
 import threading
@@ -13,7 +14,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from .config import CollectConfig
+from .config import CollectConfig, camera_parameters_digest, camera_parameters_payload
 from .devices import create_camera, create_gripper, create_robot
 from .devices.base import CameraDevice, GripperDevice, RobotDevice
 from .encoding import encode_frame
@@ -121,6 +122,9 @@ class DataCollector:
         capture_stopped: threading.Event | None = None,
         until_stopped: bool = False,
         keep_cameras_open: bool = False,
+        output_dir: Path | None = None,
+        trajectory_filename: str = "trajectory.hdf5",
+        trajectory_id: str | None = None,
     ) -> CollectionResult:
         """执行一次采集。
 
@@ -140,14 +144,33 @@ class DataCollector:
             raise CollectionError("采集时长必须为正数。")
         if capture_stopped is not None:
             capture_stopped.clear()
-        trajectory_id = self.config.session.trajectory_id or self._make_trajectory_id()
-        trajectory_dir = (
-            self.config.session.output_root
-            / self.config.session.data_type
-            / datetime.now().strftime("%Y%m%d")
-            / trajectory_id
-        )
-        trajectory_path = trajectory_dir / "trajectory.hdf5"
+        trajectory_id = trajectory_id or self.config.session.trajectory_id or self._make_trajectory_id()
+        batch_dir = self.config.session.output_root / f"batch_{self.config.session.batch_tag}"
+        collection_dir = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+        trajectory_dir = output_dir or (batch_dir / collection_dir / ("reverse" if "reverse" in trajectory_filename else "forward"))
+        parameters_payload = camera_parameters_payload(self.config)
+        parameters_digest = camera_parameters_digest(parameters_payload)
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        batch_parameters_path = batch_dir / "camera_parameters.json"
+        if batch_parameters_path.exists():
+            try:
+                stored_payload = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
+                stored_digest = str(stored_payload["digest"])
+            except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+                raise CollectionError(f"批次相机参数文件损坏，拒绝采集：{batch_parameters_path}") from error
+            if stored_digest != parameters_digest:
+                raise CollectionError(
+                    f"相机参数与批次不一致，拒绝采集：{batch_parameters_path}；"
+                    f"当前 {parameters_digest}，批次 {stored_digest}。"
+                )
+        else:
+            batch_parameters_path.write_text(
+                json.dumps({"digest": parameters_digest, "source": str(self.config.session.camera_parameters_file or "embedded"), "parameters": parameters_payload}, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        if Path(trajectory_filename).name != trajectory_filename or not trajectory_filename.endswith(".hdf5"):
+            raise CollectionError("trajectory_filename 必须是当前目录下的 .hdf5 文件名。")
+        trajectory_path = trajectory_dir / trajectory_filename
         stop_event = threading.Event()
         latest_state = LatestRobotState()
         stats = CollectionStats()
@@ -355,8 +378,11 @@ class DataCollector:
             raise CollectionError("HDF5 写入未返回完成报告。")
         if writer_report.trajectory_length == 0:
             raise CollectionError("采集未写入任何相机组帧，拒绝生成空轨迹。")
-        quality_path = write_quality_report(trajectory_path, self.config, stats)
-        manifest_path = create_manifest(trajectory_path, quality_path, trajectory_id, self.config)
+        sidecar_prefix = trajectory_path.stem if trajectory_path.stem != "trajectory" else ""
+        quality_name = f"{sidecar_prefix}_quality.json" if sidecar_prefix else "quality.json"
+        manifest_name = f"{sidecar_prefix}_manifest.json" if sidecar_prefix else "manifest.json"
+        quality_path = write_quality_report(trajectory_path, self.config, stats, output_name=quality_name)
+        manifest_path = create_manifest(trajectory_path, quality_path, trajectory_id, self.config, output_name=manifest_name)
         return CollectionResult(trajectory_id, trajectory_path, quality_path, manifest_path, stats, writer_report)
 
     def _make_trajectory_id(self) -> str:

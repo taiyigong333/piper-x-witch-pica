@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from ..models import CameraCalibration, CameraFrame, RobotState
 
@@ -19,6 +20,10 @@ class CameraDevice(ABC):
 
     @abstractmethod
     def stop(self) -> None: ...
+
+    def parameters(self) -> dict[str, Any]:
+        """返回启动后的设备参数；不支持读取的适配器返回空字典。"""
+        return {}
 
 class RobotDevice(ABC):
     @abstractmethod

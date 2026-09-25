@@ -66,6 +66,29 @@ def test_viewer_rejects_paths_outside_data_root(tmp_path: Path) -> None:
         viewer.read_trajectory("../../outside/trajectory.hdf5")
 
 
+def test_viewer_lists_normal_and_reverse_trajectories_in_one_collection(tmp_path: Path) -> None:
+    original = _write_trajectory(tmp_path)
+    collection = tmp_path / "real" / "batch_1" / "collection_0001"
+    collection.mkdir(parents=True)
+    normal = collection / "normal_trajectory.hdf5"
+    reverse = collection / "reverse_trajectory.hdf5"
+    normal.write_bytes(original.read_bytes())
+    reverse.write_bytes(original.read_bytes())
+    quality = json.dumps({"result": "pass"})
+    normal.with_name("normal_trajectory_quality.json").write_text(quality, encoding="utf-8")
+    reverse.with_name("reverse_trajectory_quality.json").write_text(quality, encoding="utf-8")
+
+    viewer = TrajectoryViewer(tmp_path)
+    summaries = {item["path"]: item for item in viewer.list_trajectories()}
+
+    normal_key = normal.relative_to(tmp_path).as_posix()
+    reverse_key = reverse.relative_to(tmp_path).as_posix()
+    assert summaries[normal_key]["direction"] == "normal"
+    assert summaries[reverse_key]["direction"] == "reverse"
+    assert summaries[normal_key]["collection"] == "collection_0001"
+    assert viewer.read_trajectory(reverse_key)["quality"]["result"] == "pass"
+
+
 def test_viewer_page_exposes_labeled_detailed_joint_and_tcp_charts() -> None:
     assert 'id="trajectory-previous"' in _PAGE
     assert 'id="trajectory-next"' in _PAGE

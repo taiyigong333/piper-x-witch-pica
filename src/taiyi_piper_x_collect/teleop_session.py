@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import json
 import os
@@ -552,6 +552,15 @@ def _delete_result(result: CollectionResult, config: CollectConfig) -> None:
     shutil.rmtree(trajectory_dir)
 
 
+def _delete_batch(batch_dir: Path, config: CollectConfig) -> None:
+    """删除本次双向采集的整批目录，避免只删掉其中一条轨迹。"""
+    output_root = config.session.output_root.resolve()
+    target = batch_dir.resolve()
+    if not target.is_relative_to(output_root) or target == output_root:
+        raise CollectionError(f"拒绝删除输出根目录之外的批次：{target}")
+    shutil.rmtree(target)
+
+
 def _completion_action(
     result: CollectionResult,
     config: CollectConfig,
@@ -660,10 +669,13 @@ def run_session(
     on_complete: str | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    camera_config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """执行一条人工遥操轨迹，并返回保存或删除后的会话摘要。"""
 
     config = load_config(config_path)
+    if camera_config_path:
+        config = replace(config, session=replace(config.session, camera_parameters_file=Path(camera_config_path).expanduser().resolve()))
     teleop_config = load_teleop_config(teleop_config_path)
     if on_complete not in {None, "save", "delete"}:
         raise ConfigurationError("on_complete 只支持 save、delete 或 null。")
@@ -781,6 +793,7 @@ def run_sessions(
     repeat: bool = False,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    camera_config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """顺序执行一条或多条独立遥操轨迹。"""
 
@@ -794,6 +807,7 @@ def run_sessions(
                 on_complete=on_complete,
                 input_fn=input_fn,
                 output_fn=output_fn,
+                camera_config_path=camera_config_path,
             )
         )
         if not repeat:
@@ -820,10 +834,13 @@ def run_reverse_recording_session(
     on_complete: str | None = None,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
+    camera_config_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """在同一轮遥操和相机预热中连续录制正向、反向两条独立轨迹。"""
 
     config = load_config(config_path)
+    if camera_config_path:
+        config = replace(config, session=replace(config.session, camera_parameters_file=Path(camera_config_path).expanduser().resolve()))
     teleop_config = load_teleop_config(teleop_config_path)
     if on_complete not in {None, "save", "delete"}:
         raise ConfigurationError("on_complete 只支持 save、delete 或 null。")
@@ -850,54 +867,75 @@ def run_reverse_recording_session(
             health_check=lambda: (warmup.raise_if_error(), _teleop_health_or_raise(teleop)),
         )
         cameras = warmup.handoff()
-        reports: list[dict[str, Any]] = []
-        for index, label in enumerate(("正向：夹取旋转红色方块并放入蓝色盘子", "反向：从蓝色盘子取出红色方块并放回旋转平台"), 1):
-            stop_request = threading.Event()
-            capture_stopped = threading.Event()
-            result_box: dict[str, CollectionResult] = {}
-            error_box: dict[str, BaseException] = {}
+        batch_dir = config.session.output_root / f"batch_{config.session.batch_tag}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        collections: list[dict[str, Any]] = []
+        while True:
+            collection_dir = batch_dir / datetime.now().strftime("%Y%m%dT%H%M%S%f")
+            staging_dir = collection_dir / ".staging"
+            staging_dir.mkdir(parents=True)
+            reports: list[dict[str, Any]] = []
+            for index, label in enumerate(("正向：夹取旋转红色方块并放入蓝色盘子", "逆向：从蓝色盘子取出红色方块并放回旋转平台"), 1):
+                stop_request = threading.Event()
+                capture_stopped = threading.Event()
+                result_box: dict[str, CollectionResult] = {}
+                error_box: dict[str, BaseException] = {}
 
-            def collect() -> None:
-                try:
-                    result_box["result"] = DataCollector(config, prestarted_cameras=cameras).run(
-                        stop_request=stop_request,
-                        capture_stopped=capture_stopped,
-                        until_stopped=True,
-                        keep_cameras_open=True,
-                    )
-                except BaseException as error:
-                    error_box["error"] = error
+                def collect() -> None:
+                    try:
+                        direction = "normal" if index == 1 else "reverse"
+                        result_box["result"] = DataCollector(config, prestarted_cameras=cameras).run(
+                            stop_request=stop_request,
+                            capture_stopped=capture_stopped,
+                            until_stopped=True,
+                            keep_cameras_open=True,
+                            output_dir=staging_dir / direction,
+                            trajectory_filename=f"{direction}_trajectory.hdf5",
+                            trajectory_id=f"batch_{config.session.batch_tag}_{collection_dir.name}_{direction}",
+                        )
+                    except BaseException as error:
+                        error_box["error"] = error
 
-            collector_thread = threading.Thread(target=collect, name=f"reverse-recording-{index}", daemon=True)
-            collector_thread.start()
-            _wait_for_space(
-                f"{label}；完成后按空格停止第 {index} 段录制。",
-                input_fn=input_fn,
-                output_fn=output_fn,
-                health_check=lambda: (_teleop_health_or_raise(teleop), _raise_collection_error(error_box)),
-            )
-            stop_request.set()
-            if not capture_stopped.wait(timeout=3.0):
-                raise CollectionError("采集线程未在 3 秒内停止取帧。")
-            collector_thread.join(timeout=30.0)
-            _raise_collection_error(error_box)
-            result = result_box.get("result")
-            if result is None:
-                raise CollectionError("采集未返回结果。")
-            action = _completion_action(result, config, on_complete, input_fn=input_fn, output_fn=output_fn)
-            reports.append({"result": "pass", "action": action, "trajectory_id": result.trajectory_id, "trajectory_path": str(result.trajectory_path), "trajectory_length": result.writer_report.trajectory_length})
-            if index == 1:
+                collector_thread = threading.Thread(target=collect, name=f"reverse-recording-{index}", daemon=True)
+                collector_thread.start()
                 _wait_for_space(
-                    "第一段已完成。保持相机和遥操运行，调整物块后按空格开始第二段录制。",
+                    f"{label}；完成后按空格停止本段录制。",
                     input_fn=input_fn,
                     output_fn=output_fn,
+                    health_check=lambda: (_teleop_health_or_raise(teleop), _raise_collection_error(error_box)),
                 )
-        _wait_for_space(
-            "第二段已完成。双击 Sense 夹爪停止遥操后按空格结束会话。",
-            input_fn=input_fn,
-            output_fn=output_fn,
-        )
-        return {"result": "pass", "mode": "reverse_recording", "trajectory_count": 2, "sessions": reports}
+                stop_request.set()
+                if not capture_stopped.wait(timeout=3.0):
+                    raise CollectionError("采集线程未在 3 秒内停止取帧。")
+                collector_thread.join(timeout=30.0)
+                _raise_collection_error(error_box)
+                result = result_box.get("result")
+                if result is None:
+                    raise CollectionError("采集未返回结果。")
+                reports.append({"result": "pass", "trajectory_id": result.trajectory_id, "trajectory_path": str(collection_dir / ("forward" if index == 1 else "reverse") / result.trajectory_path.name), "trajectory_length": result.writer_report.trajectory_length})
+                if index == 1:
+                    _wait_for_space("正向采集已结束。准备好逆向动作后按空格开始逆向采集。", input_fn=input_fn, output_fn=output_fn)
+
+            # 只有两段均成功，才将暂存文件原子地发布为一组完整采集。
+            for direction in ("forward", "reverse"):
+                staged_direction = staging_dir / direction
+                destination = collection_dir / direction
+                destination.mkdir(parents=True, exist_ok=True)
+                for staged_file in staged_direction.iterdir():
+                    shutil.move(str(staged_file), str(destination / staged_file.name))
+                staged_direction.rmdir()
+            staging_dir.rmdir()
+            action = on_complete or _wait_for_completion_action(input_fn=input_fn, output_fn=output_fn)
+            if action == "delete":
+                _delete_batch(collection_dir, config)
+            else:
+                output_fn(f"本次正向和逆向数据已保存：{collection_dir}")
+            collections.append({"collection": collection_dir.name, "collection_path": str(collection_dir), "action": action, "sessions": reports})
+            if not _wait_for_space("本次采集已完成。按空格开始同一 tag 下的下一次采集，按 q 结束。", input_fn=input_fn, output_fn=output_fn, allow_quit=True):
+                break
+            output_fn("即将开始下一次采集，相机和遥操保持运行。")
+        _wait_for_space("全部采集已完成。双击 Sense 夹爪停止遥操后按空格结束会话。", input_fn=input_fn, output_fn=output_fn)
+        return {"result": "pass", "mode": "reverse_recording", "batch_tag": config.session.batch_tag, "collection_count": len(collections), "collections": collections}
     finally:
         for camera in cameras.values():
             try:

@@ -1,0 +1,22 @@
+{
+  "cameras": [
+    {
+      "name": "camera_front",
+      "model": "RealSense_D435",
+      "serial_number": "263022073726",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "color_order": "rgb"
+    },
+    {
+      "name": "camera_wrist_right",
+      "model": "RealSense_D405",
+      "serial_number": "419122270341",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "color_order": "rgb"
+    }
+  ]
+}

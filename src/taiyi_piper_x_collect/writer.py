@@ -101,6 +101,7 @@ class Hdf5TrajectoryWriter:
         _string_dataset(metadata, "collection_time", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         _string_dataset(metadata, "collector", session.collector_hash)
         _string_dataset(metadata, "pose_representation", session.pose_representation)
+        metadata.create_dataset("batch_tag", data=np.int64(session.batch_tag))
         if session.sim_assets:
             _string_dataset(metadata, "sim_assets", session.sim_assets)
         metadata.create_dataset("trajectory_length", data=np.int64(0))
