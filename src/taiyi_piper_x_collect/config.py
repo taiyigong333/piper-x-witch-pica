@@ -48,6 +48,7 @@ class SessionConfig:
     trajectory_id: str | None = None
     batch_tag: int = 1
     camera_parameters_file: Path | None = None
+    reverse_recording_enabled: bool = True
     duration_s: float | None = None
     sim_assets: str | None = None
     pose_representation: PoseRepresentation = "xyz_xyzw"
@@ -278,6 +279,7 @@ def load_config(path: str | Path) -> CollectConfig:
             if session_raw.get("camera_parameters_file") and not Path(str(session_raw["camera_parameters_file"])).is_absolute()
             else (Path(str(session_raw["camera_parameters_file"])).expanduser().resolve() if session_raw.get("camera_parameters_file") else None)
         ),
+        reverse_recording_enabled=bool(session_raw.get("reverse_recording_enabled", True)),
         duration_s=_positive_number(session_raw["duration_s"], "session.duration_s") if session_raw.get("duration_s") is not None else None,
         sim_assets=str(session_raw["sim_assets"]) if session_raw.get("sim_assets") else None,
         pose_representation=pose_representation,  # type: ignore[arg-type]

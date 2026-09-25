@@ -12,7 +12,7 @@ import taiyi_piper_x_collect.teleop_session as teleop_session
 
 
 def test_teleop_example_can_be_loaded() -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "pika_sense_piper_x.example.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "teleop" / "pika_sense_piper_x.example.yaml"
     config = teleop_session.load_teleop_config(config_path)
 
     assert config.sensor.name == "pika_sense"
@@ -47,7 +47,7 @@ def test_ros_child_environment_removes_uv_python_environment(monkeypatch) -> Non
 
 
 def test_external_teleop_starts_in_order_and_stops_process_groups(tmp_path: Path, monkeypatch) -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "pika_sense_piper_x.example.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "teleop" / "pika_sense_piper_x.example.yaml"
     config = teleop_session.load_teleop_config(config_path)
     config = replace(
         config,
@@ -104,7 +104,7 @@ def test_external_teleop_starts_in_order_and_stops_process_groups(tmp_path: Path
 
 
 def test_controller_log_requires_rviz_and_core_nodes_to_stay_alive(tmp_path: Path) -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "pika_sense_piper_x.example.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "teleop" / "pika_sense_piper_x.example.yaml"
     config = teleop_session.load_teleop_config(config_path)
     log_path = tmp_path / "piper_x_controller.log"
     with log_path.open("w+", encoding="utf-8") as log_file:
@@ -161,7 +161,7 @@ def test_completion_action_allows_single_key_deletion(tmp_path: Path) -> None:
     trajectory_path = output_root / "real" / "20260720" / "discard" / "trajectory.hdf5"
     trajectory_path.parent.mkdir(parents=True)
     trajectory_path.write_bytes(b"not-a-real-hdf5")
-    config = load_config(Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml")
+    config = load_config(Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml")
     config = replace(config, session=replace(config.session, output_root=output_root))
     result = teleop_session.CollectionResult(
         trajectory_id="discard",
@@ -187,7 +187,7 @@ def test_completion_action_allows_single_key_deletion(tmp_path: Path) -> None:
 
 
 def test_camera_warmup_discards_frames_and_handoffs_open_cameras(monkeypatch) -> None:
-    config = load_config(Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml")
+    config = load_config(Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml")
 
     class TrackingCamera:
         def __init__(self) -> None:
@@ -224,7 +224,7 @@ def test_camera_warmup_discards_frames_and_handoffs_open_cameras(monkeypatch) ->
 
 
 def test_session_starts_collection_only_after_teleop_confirmation(tmp_path: Path, monkeypatch) -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml"
     config = load_config(config_path)
     config = replace(config, session=replace(config.session, output_root=tmp_path / "records"))
     events: list[str] = []

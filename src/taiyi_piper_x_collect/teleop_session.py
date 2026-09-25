@@ -979,9 +979,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.reverse_recording and args.repeat:
             raise ConfigurationError("--reverse-recording 与 --repeat 不能同时使用。")
+        configured_reverse = load_config(args.config).session.reverse_recording_enabled
+        reverse_recording = args.reverse_recording or configured_reverse
         report = (
             run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete)
-            if args.reverse_recording
+            if reverse_recording
             else run_sessions(args.config, args.teleop_config, duration_s=args.duration, on_complete=args.on_complete, repeat=args.repeat)
         )
         print(json.dumps(report, ensure_ascii=False))

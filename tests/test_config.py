@@ -6,7 +6,7 @@ from taiyi_piper_x_collect.config import load_config
 
 
 def test_mock_config_can_be_loaded() -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml"
     config = load_config(config_path)
 
     assert config.robot.driver == "mock"
@@ -15,7 +15,7 @@ def test_mock_config_can_be_loaded() -> None:
 
 
 def test_fully_annotated_real_example_can_be_loaded() -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "piper_x_d405_d435.example.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "pass" / "piper_x_d405_d435.example.yaml"
     config = load_config(config_path)
 
     assert config.robot.driver == "piper_x"
@@ -35,7 +35,7 @@ def test_fully_annotated_real_example_can_be_loaded() -> None:
 
 
 def test_corn_in_plate_real_collection_config_can_be_loaded() -> None:
-    config_path = Path(__file__).parents[1] / "configs" / "pick_up_the_corn_and_put_it_on_the_plate.yaml"
+    config_path = Path(__file__).parents[1] / "configs" / "pass" / "pick_up_the_corn_and_put_it_on_the_plate.yaml"
     config = load_config(config_path)
 
     assert config.session.data_type == "real"

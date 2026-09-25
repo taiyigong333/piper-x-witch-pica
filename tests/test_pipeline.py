@@ -15,7 +15,7 @@ from taiyi_piper_x_collect.quality import validate_hdf5
 
 
 def _mock_config(tmp_path: Path, pose_representation: str = "xyz_xyzw") -> Path:
-    source = Path(__file__).parents[1] / "configs" / "mock_piper_x.yaml"
+    source = Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml"
     raw = yaml.safe_load(source.read_text(encoding="utf-8"))
     raw["session"]["output_root"] = str(tmp_path / "records")
     raw["session"]["pose_representation"] = pose_representation

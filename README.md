@@ -21,7 +21,7 @@ No `pip install` or Conda installation is required for the collector. The uv env
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect collect \
-  --config configs/mock_piper_x.yaml --duration 1
+  --config configs/pass/mock_piper_x.yaml --duration 1
 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 UV_CACHE_DIR=/tmp/uv-cache uv run pytest
 ```
 
@@ -32,8 +32,8 @@ The mock command uses no CAN, camera, Pika, or ROS hardware.
 Create local configurations, then fill camera serials, calibration, task metadata, CAN interface, firmware profile, and tool offset. Local files beginning with `configs/现场_` are ignored by Git.
 
 ```bash
-cp configs/piper_x_d405_d435.example.yaml configs/现场_piper_x.yaml
-cp configs/pika_sense_piper_x.example.yaml configs/现场_pika_sense_piper_x.yaml
+cp configs/pass/piper_x_d405_d435.example.yaml configs/现场_piper_x.yaml
+cp configs/teleop/pika_sense_piper_x.example.yaml configs/现场_pika_sense_piper_x.yaml
 ```
 
 Before collection, ensure `robot.firmware_version` matches the Piper-X firmware profile (`default`, `v183`, `v188`, or `v189`). Preflight and normal collection are read-only for the arm and original gripper: they use `pyAgxArm` feedback APIs but never call arm enable, arm motion, or gripper motion APIs.
@@ -67,7 +67,7 @@ export PYTHONPATH=$CONDA_PREFIX/lib/python3.10/site-packages:$PYTHONPATH
 ros2 launch pika_remote_agx_arm teleop_single_piper_x.launch.py
 ```
 
-Quickly open and close the Sense gripper twice to enable teleoperation. The collection orchestrator can start the same commands from `configs/pika_sense_piper_x.example.yaml`; it sanitizes its child environment so ROS keeps using the `pika` Conda environment rather than uv:
+Quickly open and close the Sense gripper twice to enable teleoperation. The collection orchestrator can start the same commands from `configs/teleop/pika_sense_piper_x.example.yaml`; it sanitizes its child environment so ROS keeps using the `pika` Conda environment rather than uv:
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect calibrate-base \
