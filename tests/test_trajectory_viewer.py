@@ -89,6 +89,27 @@ def test_viewer_lists_normal_and_reverse_trajectories_in_one_collection(tmp_path
     assert viewer.read_trajectory(reverse_key)["quality"]["result"] == "pass"
 
 
+def test_viewer_lists_any_existing_forward_or_reverse_trajectory(tmp_path: Path) -> None:
+    original = _write_trajectory(tmp_path)
+    collection = tmp_path / "batch_1" / "20260926T120000"
+    forward = collection / "forward" / "trajectory.hdf5"
+    forward.parent.mkdir(parents=True)
+    forward.write_bytes(original.read_bytes())
+    viewer = TrajectoryViewer(tmp_path)
+
+    summaries = viewer.list_trajectories()
+    assert len(summaries) == 2
+    assert next(item for item in summaries if item["path"].startswith("batch_1/"))["direction"] == "normal"
+
+    forward.unlink()
+    reverse = collection / "reverse" / "trajectory.hdf5"
+    reverse.parent.mkdir(parents=True)
+    reverse.write_bytes(original.read_bytes())
+    summaries = viewer.list_trajectories()
+    assert len(summaries) == 2
+    assert next(item for item in summaries if item["path"].startswith("batch_1/"))["direction"] == "reverse"
+
+
 def test_viewer_page_exposes_labeled_detailed_joint_and_tcp_charts() -> None:
     assert 'id="trajectory-previous"' in _PAGE
     assert 'id="trajectory-next"' in _PAGE

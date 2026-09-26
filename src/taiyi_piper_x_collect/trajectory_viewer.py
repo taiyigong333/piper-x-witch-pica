@@ -21,13 +21,23 @@ from .errors import CollectionError
 
 
 _MAX_CHART_POINTS = 2_000
-_TRAJECTORY_NAMES = {"trajectory.hdf5", "normal_trajectory.hdf5", "reverse_trajectory.hdf5"}
+_TRAJECTORY_NAMES = {"trajectory.hdf5", "normal_trajectory.hdf5", "reverse_trajectory.hdf5", "forward_trajectory.hdf5"}
 
 
 def _quality_path(trajectory_path: Path) -> Path:
     return trajectory_path.with_name(
         "quality.json" if trajectory_path.name == "trajectory.hdf5" else f"{trajectory_path.stem}_quality.json"
     )
+
+
+def _trajectory_direction(path: Path) -> str:
+    """按文件名和目录兼容新旧双向采集目录。"""
+
+    if path.name in {"normal_trajectory.hdf5", "forward_trajectory.hdf5"} or path.parent.name == "forward":
+        return "normal"
+    if path.name == "reverse_trajectory.hdf5" or path.parent.name == "reverse":
+        return "reverse"
+    return "single"
 
 
 @dataclass(frozen=True)
@@ -124,7 +134,7 @@ class TrajectoryViewer:
                 "error": f"无法读取 HDF5：{error}",
             }
         quality = _read_json(_quality_path(path))
-        direction = "normal" if path.name == "normal_trajectory.hdf5" else "reverse" if path.name == "reverse_trajectory.hdf5" else "single"
+        direction = _trajectory_direction(path)
         return {
             "path": path.relative_to(self.root).as_posix(),
             "frame_count": frame_count,

@@ -20,6 +20,8 @@ UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect --help
 - `configs/tasks/`：任务、机械臂、数据输出配置。
 - `configs/pass/`：可复制的示例配置。
 
+RealSense 当前参数读取和画面自动调参工具位于 `tool/realsense_camera/`，使用采集 YAML 决定需要读取的相机和参数，输出独立 JSON 到 `configs/camera/`。
+
 相机 JSON 中配置的 option 会在启动时写入设备。运行快照只保存实际启用的流、设备标识、配置中应用的 option 当前值和本次流的标定参数；未启用深度时不记录深度参数。
 
 ## 常用命令
