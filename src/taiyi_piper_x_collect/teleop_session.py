@@ -561,6 +561,37 @@ def _delete_batch(batch_dir: Path, config: CollectConfig) -> None:
     shutil.rmtree(target)
 
 
+def _publish_reverse_recording(staging_dir: Path, collection_dir: Path) -> None:
+    """将双向采集暂存目录发布为 ``forward`` 和 ``reverse`` 两个方向。"""
+
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    collection_dir.mkdir(parents=True, exist_ok=True)
+    # 早期版本误用 normal 作为正向暂存目录；发布时兼容并合并它，避免丢失已采集数据。
+    legacy_normal = staging_dir / "normal"
+    forward_staging = staging_dir / "forward"
+    if legacy_normal.exists():
+        forward_staging.mkdir(parents=True, exist_ok=True)
+        for staged_file in legacy_normal.iterdir():
+            target = forward_staging / staged_file.name
+            if target.exists():
+                raise CollectionError(f"暂存正向文件目标已存在，拒绝覆盖：{target}")
+            shutil.move(str(staged_file), str(target))
+        legacy_normal.rmdir()
+
+    for direction in ("forward", "reverse"):
+        staged_direction = staging_dir / direction
+        staged_direction.mkdir(parents=True, exist_ok=True)
+        destination = collection_dir / direction
+        destination.mkdir(parents=True, exist_ok=True)
+        for staged_file in staged_direction.iterdir():
+            target = destination / staged_file.name
+            if target.exists():
+                raise CollectionError(f"采集发布目标已存在，拒绝覆盖：{target}")
+            shutil.move(str(staged_file), str(target))
+        staged_direction.rmdir()
+    staging_dir.rmdir()
+
+
 def _completion_action(
     result: CollectionResult,
     config: CollectConfig,
@@ -883,7 +914,7 @@ def run_reverse_recording_session(
 
                 def collect() -> None:
                     try:
-                        direction = "normal" if index == 1 else "reverse"
+                        direction = "forward" if index == 1 else "reverse"
                         result_box["result"] = DataCollector(config, prestarted_cameras=cameras).run(
                             stop_request=stop_request,
                             capture_stopped=capture_stopped,
@@ -917,14 +948,7 @@ def run_reverse_recording_session(
                     _wait_for_space("正向采集已结束。准备好逆向动作后按空格开始逆向采集。", input_fn=input_fn, output_fn=output_fn)
 
             # 只有两段均成功，才将暂存文件原子地发布为一组完整采集。
-            for direction in ("forward", "reverse"):
-                staged_direction = staging_dir / direction
-                destination = collection_dir / direction
-                destination.mkdir(parents=True, exist_ok=True)
-                for staged_file in staged_direction.iterdir():
-                    shutil.move(str(staged_file), str(destination / staged_file.name))
-                staged_direction.rmdir()
-            staging_dir.rmdir()
+            _publish_reverse_recording(staging_dir, collection_dir)
             action = on_complete or _wait_for_completion_action(input_fn=input_fn, output_fn=output_fn)
             if action == "delete":
                 _delete_batch(collection_dir, config)

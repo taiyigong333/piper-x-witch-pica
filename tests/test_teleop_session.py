@@ -186,6 +186,20 @@ def test_completion_action_allows_single_key_deletion(tmp_path: Path) -> None:
     assert "按 d 删除" in messages[0]
 
 
+def test_publish_reverse_recording_creates_missing_direction_and_migrates_legacy_normal(tmp_path: Path) -> None:
+    staging = tmp_path / "collection" / ".staging"
+    collection = tmp_path / "collection"
+    legacy_normal = staging / "normal"
+    legacy_normal.mkdir(parents=True)
+    (legacy_normal / "normal_trajectory.hdf5").write_bytes(b"normal")
+
+    teleop_session._publish_reverse_recording(staging, collection)
+
+    assert (collection / "forward" / "normal_trajectory.hdf5").read_bytes() == b"normal"
+    assert (collection / "reverse").is_dir()
+    assert not staging.exists()
+
+
 def test_camera_warmup_discards_frames_and_handoffs_open_cameras(monkeypatch) -> None:
     config = load_config(Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml")
 

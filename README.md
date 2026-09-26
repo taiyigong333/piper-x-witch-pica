@@ -20,7 +20,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect --help
 - `configs/tasks/`：任务、机械臂、数据输出配置。
 - `configs/pass/`：可复制的示例配置。
 
-相机 JSON 中的 option 会在启动时写入设备。采集时会读取设备信息、传感器 option、范围、流配置、内参、外参、深度比例和 Advanced Mode 信息，并保存到批次参数文件。
+相机 JSON 中配置的 option 会在启动时写入设备。运行快照只保存实际启用的流、设备标识、配置中应用的 option 当前值和本次流的标定参数；未启用深度时不记录深度参数。
 
 ## 常用命令
 

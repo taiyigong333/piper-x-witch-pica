@@ -1,46 +1,5 @@
 {
   "purpose": "",
-  "recording": {
-    "all_supported_sensor_options": true,
-    "all_device_info_fields": true,
-    "all_sensor_info_fields": true,
-    "all_stream_profiles": true,
-    "active_stream_profiles": true,
-    "color_depth_intrinsics": true,
-    "depth_to_color_extrinsics": true,
-    "depth_scale": true,
-    "advanced_mode_json": true,
-    "sdk_option_catalog": true
-  },
-  "sdk_option_catalog": [
-    "accuracy", "alternate_ir", "ambient_light", "apd_temperature", "asic_temperature",
-    "auto_exposure_converge_step", "auto_exposure_limit", "auto_exposure_limit_toggle",
-    "auto_exposure_mode", "auto_exposure_priority", "auto_gain_limit", "auto_gain_limit_toggle",
-    "auto_rx_sensitivity", "backlight_compensation", "brightness", "color_scheme",
-    "confidence_threshold", "contrast", "depth_offset", "depth_units", "digital_gain",
-    "embedded_filter_enabled", "emitter_always_on", "emitter_enabled", "emitter_frequency",
-    "emitter_on_off", "enable_auto_exposure", "enable_auto_white_balance",
-    "enable_dynamic_calibration", "enable_ir_reflectivity", "enable_map_preservation",
-    "enable_mapping", "enable_max_usable_range", "enable_motion_correction",
-    "enable_pose_jumping", "enable_relocalization", "error_polling_enabled", "exposure",
-    "filter_magnitude", "filter_option", "filter_smooth_alpha", "filter_smooth_delta",
-    "fisheye_auto_exposure_mode", "frames_queue_size", "freefall_detection_enabled", "gain",
-    "gamma", "global_time_enabled", "gyro_sensitivity", "hardware_preset", "hdr_enabled",
-    "histogram_equalization_enabled", "holes_fill", "host_performance", "hue",
-    "humidity_temperature", "inter_cam_sync_mode", "invalidation_bypass", "laser_power",
-    "ldd_temperature", "led_power", "left_ir_temperature", "lld_temperature", "ma_temperature",
-    "max_distance", "mc_temperature", "min_distance", "motion_module_temperature",
-    "motion_range", "noise_estimation", "noise_filtering", "ohm_temperature",
-    "output_trigger_enabled", "post_processing_sharpening", "power_line_frequency",
-    "pre_processing_sharpening", "projector_temperature", "receiver_gain", "receiver_sensitivity",
-    "region_of_interest", "reset_camera_accuracy_health", "rgb_tnr_enabled", "rotation",
-    "safety_mcu_temperature", "safety_mode", "safety_preset_active_index", "sensor_mode",
-    "sequence_id", "sequence_name", "sequence_size", "sharpness", "soc_pvt_temperature",
-    "stereo_baseline", "stream_filter", "stream_format_filter", "stream_index_filter",
-    "texture_source", "thermal_compensation", "total_frame_drops", "transmitter_frequency",
-    "trigger_camera_accuracy_health", "unknown", "vertical_binning", "visual_preset",
-    "white_balance", "zero_order_enabled", "zero_order_point_x", "zero_order_point_y"
-  ],
   "cameras": [
     {
       "name": "camera_front",
@@ -49,12 +8,9 @@
       "serial_number": "263022073726",
       "width": 640,
       "height": 480,
-      "depth_width": 640,
-      "depth_height": 480,
       "fps": 30,
       "color_order": "rgb",
       "enabled": true,
-      "align_depth_to_color": true,
       "options": {
         "exposure": 120.0,
         "white_balance": 4600.0,
@@ -69,12 +25,9 @@
       "serial_number": "419122270341",
       "width": 640,
       "height": 480,
-      "depth_width": 640,
-      "depth_height": 480,
       "fps": 30,
       "color_order": "rgb",
       "enabled": true,
-      "align_depth_to_color": true,
       "options": {
         "exposure": 120.0,
         "white_balance": 4600.0,
@@ -82,5 +35,144 @@
         "enable_auto_white_balance": 0.0
       }
     }
-  ]
+  ],
+  "devices": {
+    "camera_front": {
+      "device_info": {
+        "name": "Intel RealSense D435I",
+        "serial_number": "263022073726",
+        "firmware_version": "5.15.1.55",
+        "product_line": "D400"
+      },
+      "sdk_version": "2.58.2",
+      "sensors": [
+        {
+          "info": {
+            "name": "Stereo Module"
+          },
+          "options": {
+            "exposure": {
+              "value": 120.0
+            },
+            "enable_auto_exposure": {
+              "value": 0.0
+            }
+          }
+        },
+        {
+          "info": {
+            "name": "RGB Camera"
+          },
+          "options": {
+            "exposure": {
+              "value": 120.0
+            },
+            "white_balance": {
+              "value": 4600.0
+            },
+            "enable_auto_exposure": {
+              "value": 0.0
+            },
+            "enable_auto_white_balance": {
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "streams": {
+        "color": {
+          "width": 640,
+          "height": 480,
+          "fps": 30.0,
+          "format": "bgr8"
+        }
+      },
+      "configured_options": {
+        "exposure": 120.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0
+      },
+      "calibration": {
+        "color_intrinsics": {
+          "width": 640,
+          "height": 480,
+          "fx": 606.4737548828125,
+          "fy": 605.2252807617188,
+          "ppx": 325.0398254394531,
+          "ppy": 251.5495147705078,
+          "model": "distortion.inverse_brown_conrady",
+          "coeffs": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      }
+    },
+    "camera_wrist_right": {
+      "device_info": {
+        "name": "Intel RealSense D405",
+        "serial_number": "419122270341",
+        "firmware_version": "5.16.0.1",
+        "product_line": "D400"
+      },
+      "sdk_version": "2.58.2",
+      "sensors": [
+        {
+          "info": {
+            "name": "Stereo Module"
+          },
+          "options": {
+            "exposure": {
+              "value": 120.0
+            },
+            "white_balance": {
+              "value": 4600.0
+            },
+            "enable_auto_exposure": {
+              "value": 0.0
+            },
+            "enable_auto_white_balance": {
+              "value": 0.0
+            }
+          }
+        }
+      ],
+      "streams": {
+        "color": {
+          "width": 640,
+          "height": 480,
+          "fps": 30.0,
+          "format": "bgr8"
+        }
+      },
+      "configured_options": {
+        "exposure": 120.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0
+      },
+      "calibration": {
+        "color_intrinsics": {
+          "width": 640,
+          "height": 480,
+          "fx": 393.1961669921875,
+          "fy": 392.61639404296875,
+          "ppx": 316.5106506347656,
+          "ppy": 229.9581756591797,
+          "model": "distortion.inverse_brown_conrady",
+          "coeffs": [
+            -0.05470449477434158,
+            0.055831726640462875,
+            0.0007175425998866558,
+            0.0006199476192705333,
+            -0.017803439870476723
+          ]
+        }
+      }
+    }
+  }
 }
