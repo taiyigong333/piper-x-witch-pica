@@ -28,6 +28,7 @@ class PiperXControl:
         self.can_name = can_name
         self.firmware_version = firmware_version
         self.arm: Any | None = None
+        self.gripper: Any | None = None
 
     def connect(self, *, wait_timeout_s: float = 5.0) -> None:
         if self.arm is not None:
@@ -43,6 +44,12 @@ class PiperXControl:
         try:
             self.arm = AgxArmFactory.create_arm(config)
             self.arm.connect()
+            # 夹爪反馈与机械臂共用同一条 CAN 连接，只初始化读取驱动，不发送控制帧。
+            try:
+                self.gripper = self.arm.init_effector(self.arm.OPTIONS.EFFECTOR.AGX_GRIPPER)
+            except Exception:
+                # 夹爪不可用时仍允许读取机械臂状态，GUI 会将夹爪状态显示为 None。
+                self.gripper = None
             deadline = time.monotonic() + wait_timeout_s
             while time.monotonic() < deadline:
                 feedback = self.arm.get_joint_angles()
@@ -61,6 +68,7 @@ class PiperXControl:
         if self.arm is not None:
             self.arm.disconnect()
             self.arm = None
+            self.gripper = None
 
     def _require_arm(self) -> Any:
         if self.arm is None:
@@ -78,17 +86,31 @@ class PiperXControl:
             enabled = None
         try:
             status = arm.get_arm_status()
-            status_value = vars(status.msg) if status is not None and hasattr(status, "msg") else None
+            status_value = _to_value(status.msg) if status is not None and hasattr(status, "msg") else None
         except Exception:
             status_value = None
+        try:
+            flange = arm.get_flange_pose()
+            flange_value = _to_value(flange.msg) if flange is not None and hasattr(flange, "msg") else None
+        except Exception:
+            flange_value = None
+        try:
+            gripper = self.gripper or arm.init_effector(arm.OPTIONS.EFFECTOR.AGX_GRIPPER)
+            self.gripper = gripper
+            feedback = gripper.get_gripper_status()
+            gripper_value = _to_value(feedback.msg) if feedback is not None and hasattr(feedback, "msg") else None
+        except Exception:
+            gripper_value = None
         return {
-            "joints_rad": list(joints.msg) if joints is not None and hasattr(joints, "msg") else None,
+            "joints_rad": _to_value(joints.msg) if joints is not None and hasattr(joints, "msg") else None,
+            "flange_pose": flange_value,
+            "gripper": gripper_value,
             "enabled": enabled,
             "arm_status": status_value,
         }
 
     def stop_hold(self) -> None:
-        """以 pyAgxArm 的阻尼急停停止当前运动，保持当前位置，不发送 reset。"""
+        """以阻尼急停停止当前运动并保持当前位置，不使能/失能电机。"""
 
         self._require_arm().electronic_emergency_stop()
 
@@ -100,3 +122,18 @@ class PiperXControl:
         # 电子急停后的控制器仍处于 motion stop 状态，必须先由操作员确认安全再复位。
         arm.reset()
         return bool(arm.enable())
+
+
+def _to_value(value: Any) -> Any:
+    """把 SDK 反馈对象转换为 GUI 可显示的基础 Python 值。"""
+
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_to_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _to_value(item) for key, item in value.items()}
+    try:
+        return {str(key): _to_value(item) for key, item in vars(value).items() if not key.startswith("_")}
+    except TypeError:
+        return str(value)

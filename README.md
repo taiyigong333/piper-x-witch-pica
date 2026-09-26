@@ -41,10 +41,10 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q
 机械臂失能或电子急停后，可运行：
 
 ```bash
-python -m tool.piper_x_control.gui
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.piper_x_control.gui
 ```
 
-GUI 提供读取状态、停止保持、失能和恢复使能。恢复使能会在二次确认后执行 `reset()` 再 `enable()`；`reset()` 可能造成瞬时失电，悬空或带负载时禁止操作。
+GUI 实时显示关节角、末端 flange 位姿、机械臂状态和夹爪反馈，并提供停止保持（阻尼）、失能和恢复使能。停止保持不调用 `disable()`；恢复使能会在二次确认后执行 `reset()` 再 `enable()`。`reset()` 可能造成瞬时失电，悬空或带负载时禁止操作。
 
 ## 安全边界
 
