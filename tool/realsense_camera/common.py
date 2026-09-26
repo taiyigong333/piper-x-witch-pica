@@ -6,16 +6,59 @@ import json
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from taiyi_piper_x_collect.config import CollectConfig, load_config
 from taiyi_piper_x_collect.devices.realsense import RealSenseCamera
 
 
 def load_realsense_config(path: str | Path) -> CollectConfig:
+    _create_missing_camera_parameters(path)
     config = load_config(path)
     cameras = config.enabled_cameras
     if not cameras or any(camera.driver != "realsense" for camera in cameras):
         raise ValueError("输入采集配置必须包含至少一台 enabled 的 RealSense 相机。")
     return config
+
+
+def _create_missing_camera_parameters(path: str | Path) -> None:
+    """参数文件尚未生成时，按采集 YAML 创建可被正式校验的初始模板。"""
+    source = Path(path).expanduser().resolve()
+    raw = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
+    session = raw.get("session", {})
+    configured_path = session.get("camera_parameters_file") if isinstance(session, dict) else None
+    if not configured_path:
+        return
+    output = Path(str(configured_path)).expanduser()
+    if not output.is_absolute():
+        output = (source.parent / output).resolve()
+    if output.exists():
+        return
+
+    cameras = raw.get("cameras", [])
+    if not isinstance(cameras, list):
+        return
+    items = []
+    for camera in cameras:
+        if not isinstance(camera, dict):
+            continue
+        item = dict(camera)
+        # Viewer 自动调整后需要同时读取自动模式和最终的手动曝光/白平衡值。
+        item.setdefault(
+            "options",
+            {
+                "exposure": 120.0,
+                "white_balance": 4600.0,
+                "enable_auto_exposure": 1.0,
+                "enable_auto_white_balance": 1.0,
+            },
+        )
+        items.append(item)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps({"purpose": "自动生成的相机参数初始模板", "cameras": items}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def start_cameras(config: CollectConfig, *, apply_options: bool) -> dict[str, RealSenseCamera]:
