@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -330,6 +331,8 @@ def load_config(path: str | Path) -> CollectConfig:
     if not isinstance(cameras_raw, list):
         raise ConfigurationError("cameras 必须为列表。")
     cameras = tuple(_camera(value, index) for index, value in enumerate(cameras_raw))
+    if data_type == "real" and any(camera.driver == "realsense" for camera in cameras) and not session_raw.get("camera_parameters_file"):
+        raise ConfigurationError("真实采集必须配置 session.camera_parameters_file，拒绝使用内嵌相机参数。")
     if session_raw.get("camera_parameters_file"):
         camera_path = session.camera_parameters_file
         try:
@@ -340,10 +343,25 @@ def load_config(path: str | Path) -> CollectConfig:
         if not isinstance(parameter_cameras, list):
             raise ConfigurationError("相机参数文件必须包含 cameras 列表。")
         parameter_by_name = {str(item.get("name")): item for item in parameter_cameras if isinstance(item, dict) and item.get("name")}
+        configured_names = {camera.name for camera in cameras}
+        if set(parameter_by_name) != configured_names:
+            raise ConfigurationError(
+                "相机参数文件与 YAML 相机名称不一致："
+                f"YAML={sorted(configured_names)}，JSON={sorted(parameter_by_name)}。"
+            )
+        for camera in cameras:
+            item = parameter_by_name[camera.name]
+            mismatches = []
+            for field_name in ("driver", "model", "serial_number", "width", "height", "depth_width", "depth_height", "fps", "color_order", "enabled", "align_depth_to_color"):
+                if field_name in item and item[field_name] != getattr(camera, field_name):
+                    mismatches.append(f"{field_name}: YAML={getattr(camera, field_name)!r}, JSON={item[field_name]!r}")
+            if mismatches:
+                raise ConfigurationError(f"相机 {camera.name} 的 YAML 与参数文件不一致：{'；'.join(mismatches)}")
+            options = item.get("options")
+            if not isinstance(options, dict) or not options:
+                raise ConfigurationError(f"相机参数文件必须为 {camera.name} 提供确定的 options。")
         cameras = tuple(
-            replace(camera, options={str(k): float(v) for k, v in parameter_by_name.get(camera.name, {}).get("options", {}).items()})
-            if camera.name in parameter_by_name and isinstance(parameter_by_name[camera.name].get("options", {}), dict)
-            else camera
+            replace(camera, options={str(k): float(v) for k, v in parameter_by_name[camera.name]["options"].items()})
             for camera in cameras
         )
     enabled_cameras = tuple(camera for camera in cameras if camera.enabled)
@@ -411,5 +429,23 @@ def camera_parameters_payload(config: CollectConfig) -> dict[str, Any]:
 
 
 def camera_parameters_digest(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    # 运行时设备快照会同步写回相机 JSON，不应改变静态采集配置的批次身份。
+    stable_payload = {key: value for key, value in payload.items() if key not in {"devices", "runtime_snapshot"}}
+    canonical = json.dumps(stable_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def save_camera_runtime_parameters(path: Path | None, devices: dict[str, Any]) -> None:
+    """将实机读取值同步保存到相机配置，静态配置字段保持不变。"""
+    if path is None:
+        return
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("JSON 根节点必须是对象")
+        payload["devices"] = devices
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        raise ConfigurationError(f"无法保存相机运行参数到 {path}：{error}") from error

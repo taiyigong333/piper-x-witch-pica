@@ -65,3 +65,15 @@ def test_piper_x_gripper_rejects_angle_mode() -> None:
 
     with pytest.raises(DeviceError, match="width"):
         robot.read_gripper_position()
+
+
+def test_gripper_feedback_timeout_reports_specific_last_state(monkeypatch) -> None:
+    robot = PiperXRobot(RobotConfig(name="piper_x", driver="piper_x", can_name="can0"), "xyz_xyzw")
+    robot._arm = SimpleNamespace(
+        OPTIONS=SimpleNamespace(EFFECTOR=SimpleNamespace(AGX_GRIPPER="agx_gripper")),
+        init_effector=lambda _: SimpleNamespace(get_gripper_status=lambda: None),
+    )
+    monkeypatch.setattr("taiyi_piper_x_collect.devices.piper_x.time.sleep", lambda _: None)
+
+    with pytest.raises(DeviceError, match="尚未收到 Piper-X 原装夹爪反馈"):
+        robot.wait_for_gripper_feedback(timeout_s=0.001)

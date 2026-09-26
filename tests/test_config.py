@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from taiyi_piper_x_collect.config import load_config
+from taiyi_piper_x_collect.config import camera_parameters_digest, load_config, save_camera_runtime_parameters
 
 
 def test_mock_config_can_be_loaded() -> None:
@@ -120,3 +121,17 @@ robot:
         assert "xyz_rxryrz" in str(error)
     else:
         raise AssertionError("应拒绝 quaternion TCP 配置用于 Piper 起始位姿控制。")
+
+
+def test_camera_runtime_snapshot_is_saved_without_changing_batch_identity(tmp_path: Path) -> None:
+    path = tmp_path / "camera.json"
+    payload = {"cameras": [{"name": "camera_front", "options": {"exposure": 100}}]}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    digest = camera_parameters_digest(payload)
+    devices = {"camera_front": {"sensors": [{"options": {"exposure": {"value": 100}}}]}}
+
+    save_camera_runtime_parameters(path, devices)
+
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["devices"] == devices
+    assert camera_parameters_digest(saved) == digest

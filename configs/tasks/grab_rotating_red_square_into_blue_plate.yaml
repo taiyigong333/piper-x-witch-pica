@@ -8,7 +8,7 @@ session:
   format_version: "1.0.0"
   # 手动递增；不同批次写入不同的 batch_<数字> 目录。
   batch_tag: 1
-  camera_parameters_file: ../cameras/piper_x_d405_d435.parameters.json
+  camera_parameters_file: ../camera/piper_x_d405_d435.parameters.json
   reverse_recording_enabled: true
   duration_s: 60
   pose_representation: xyz_rxryrz
@@ -73,7 +73,7 @@ robot:
     joint_positions_rad: [0.0111352006, 0.8443379322, -1.0155198253, 1.1606788592, 0.0746477321, 0.0196698607]
     tcp_pose: null
     speed_percent: 10
-    timeout_s: 30
+    timeout_s: 20
     joint_tolerance_rad: 0.035
     position_tolerance_m: 0.01
     orientation_tolerance_rad: 0.1

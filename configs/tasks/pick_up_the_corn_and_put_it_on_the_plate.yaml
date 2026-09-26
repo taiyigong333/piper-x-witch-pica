@@ -8,6 +8,7 @@ session:
   format_version: "1.0.0"
   duration_s: 60
   pose_representation: xyz_rxryrz
+  camera_parameters_file: ../camera/piper_x_d405_d435.parameters.json
   hdf5:
     queue_size: 256
     batch_size: 16

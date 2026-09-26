@@ -16,6 +16,7 @@ class FakePiperXArm:
         self.joint_commands: list[list[float]] = []
         self.pose_commands: list[list[float]] = []
         self.tcp_offsets: list[list[float]] = []
+        self.emergency_stops = 0
 
     def connect(self) -> None:
         self.connected = True
@@ -40,6 +41,9 @@ class FakePiperXArm:
 
     def move_p(self, pose: list[float]) -> None:
         self.pose_commands.append(pose)
+
+    def electronic_emergency_stop(self) -> None:
+        self.emergency_stops += 1
 
     def get_joint_angles(self):
         return SimpleNamespace(msg=self.joints)
@@ -78,3 +82,26 @@ def test_tcp_initial_pose_uses_sdk_tcp_to_flange_conversion() -> None:
 
     assert arm.tcp_offsets == [[0.1, 0.0, 0.0, 0.0, 0.0, 0.0]]
     assert arm.pose_commands == [[0.2, 0.1, 0.3, 0.0, 0.0, math.pi / 2]]
+
+
+def test_joint_timeout_reports_feedback_and_triggers_emergency_stop() -> None:
+    arm = FakePiperXArm([0.0] * 6, [0.3, 0.0, 0.2, 0.0, 0.0, 0.0])
+    ticks = iter([0.0, 0.0, 0.1, 1.1])
+    controller = PiperXInitialPoseController(
+        RobotConfig(name="piper_x", driver="piper_x", can_name="can0"),
+        InitialPoseConfig(enabled=True, mode="joint", joint_positions_rad=(0.1,) * 6, timeout_s=1),
+        arm_factory=lambda: arm,
+        sleep_fn=lambda _: None,
+        monotonic_fn=lambda: next(ticks),
+    )
+
+    try:
+        controller.move()
+    except Exception as error:
+        assert "最后反馈(rad)" in str(error)
+        assert "动作前后变化(rad)" in str(error)
+        assert "不要直接重复运行" in str(error)
+    else:
+        raise AssertionError("未到达目标时应报告超时。")
+
+    assert arm.emergency_stops == 1

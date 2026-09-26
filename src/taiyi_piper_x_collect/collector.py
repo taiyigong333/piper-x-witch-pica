@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from .config import CollectConfig, camera_parameters_digest, camera_parameters_payload
+from .config import CollectConfig, camera_parameters_digest, camera_parameters_payload, save_camera_runtime_parameters
 from .devices import create_camera, create_gripper, create_robot
 from .devices.base import CameraDevice, GripperDevice, RobotDevice
 from .encoding import encode_frame
@@ -224,6 +224,8 @@ class DataCollector:
             # 设备启动后读取实际生效的 option，和输入参数一起保存到批次文件。
             batch_record = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
             batch_record["devices"] = {name: camera.parameters() for name, camera in cameras.items()}
+            save_camera_runtime_parameters(self.config.session.camera_parameters_file, batch_record["devices"])
+            batch_record["parameters"] = camera_parameters_payload(self.config)
             batch_parameters_path.write_text(
                 json.dumps(batch_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
             )

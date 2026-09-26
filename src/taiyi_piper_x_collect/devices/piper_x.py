@@ -135,7 +135,7 @@ class PiperXRobot(RobotDevice):
         except Exception as error:
             raise DeviceError(f"Piper-X 原装夹爪反馈读取失败：{error}") from error
 
-    def wait_for_gripper_feedback(self, timeout_s: float = 1.0) -> float:
+    def wait_for_gripper_feedback(self, timeout_s: float = 5.0) -> float:
         """等待原装夹爪首帧，避免在启动时写入不存在的反馈。"""
 
         deadline = time.monotonic() + timeout_s
@@ -146,7 +146,10 @@ class PiperXRobot(RobotDevice):
             except DeviceError as error:
                 last_error = error
                 time.sleep(0.005)
-        raise DeviceError(f"等待 Piper-X 原装夹爪反馈超时（{timeout_s:.1f} 秒）。") from last_error
+        raise DeviceError(
+            f"等待 Piper-X 原装夹爪反馈超时（{timeout_s:.1f} 秒）；最后状态：{last_error}。"
+            "请确认原装夹爪已连接、CAN 线上有夹爪状态报文，并检查固件版本配置。"
+        ) from last_error
 
     def stop(self) -> None:
         self._gripper = None

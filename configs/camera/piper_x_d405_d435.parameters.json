@@ -1,4 +1,5 @@
 {
+  "purpose": "",
   "recording": {
     "all_supported_sensor_options": true,
     "all_device_info_fields": true,
@@ -43,12 +44,17 @@
   "cameras": [
     {
       "name": "camera_front",
+      "driver": "realsense",
       "model": "RealSense_D435",
       "serial_number": "263022073726",
       "width": 640,
       "height": 480,
+      "depth_width": 640,
+      "depth_height": 480,
       "fps": 30,
       "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
       "options": {
         "exposure": 120.0,
         "white_balance": 4600.0,
@@ -58,12 +64,17 @@
     },
     {
       "name": "camera_wrist_right",
+      "driver": "realsense",
       "model": "RealSense_D405",
       "serial_number": "419122270341",
       "width": 640,
       "height": 480,
+      "depth_width": 640,
+      "depth_height": 480,
       "fps": 30,
       "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
       "options": {
         "exposure": 120.0,
         "white_balance": 4600.0,

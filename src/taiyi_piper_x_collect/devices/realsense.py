@@ -46,40 +46,8 @@ class RealSenseCamera(CameraDevice):
                     int(self._config.fps),
                 )
             profile = pipeline.start(stream_config)
+            self._pipeline = pipeline
             device = profile.get_device()
-            sensors: list[dict[str, Any]] = []
-            for sensor in device.query_sensors():
-                options: dict[str, Any] = {}
-                for option in sensor.get_supported_options():
-                    try:
-                        option_name = self._option_name(rs, option)
-                        value = float(sensor.get_option(option))
-                        record: dict[str, Any] = {
-                            "value": value,
-                            "read_only": bool(sensor.is_option_read_only(option)),
-                        }
-                        try:
-                            option_range = sensor.get_option_range(option)
-                            record["range"] = {
-                                "min": float(option_range.min),
-                                "max": float(option_range.max),
-                                "step": float(option_range.step),
-                                "default": float(option_range.default),
-                            }
-                        except Exception:
-                            record["range"] = None
-                        try:
-                            record["description"] = rs.option_to_string(option)
-                        except Exception:
-                            record["description"] = option_name
-                        try:
-                            record["value_description"] = sensor.get_option_value_description(option, value)
-                        except Exception:
-                            record["value_description"] = None
-                        options[option_name] = record
-                    except Exception:
-                        options[str(option)] = {"value": None}
-                sensors.append({"name": sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else "", "options": options})
             configured_options: dict[str, Any] = {}
             for option_name, option_value in self._config.options.items():
                 option = self._resolve_option(rs, option_name)
@@ -101,26 +69,38 @@ class RealSenseCamera(CameraDevice):
                     raise DeviceError(f"{self._config.name} 相机参数设置失败：{option_name}: {errors or ['sensor 不支持该 option']}")
             # 设置完成后重新采集一次完整参数，确保保存的是实际生效值。
             sensors = self._read_sensor_parameters(rs, device)
+            color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
+            color_intrinsics = color_stream.get_intrinsics()
+            calibration: dict[str, Any] = {
+                "color_intrinsics": self._intrinsics_payload(color_intrinsics),
+            }
+            if capture_depth:
+                depth_stream = profile.get_stream(rs.stream.depth).as_video_stream_profile()
+                calibration["depth_intrinsics"] = self._intrinsics_payload(depth_stream.get_intrinsics())
+                calibration["depth_to_color_extrinsics"] = self._extrinsics_payload(
+                    depth_stream.get_extrinsics_to(color_stream)
+                )
             self._parameters = {
-                "name": device.get_info(rs.camera_info.name),
-                "serial_number": device.get_info(rs.camera_info.serial_number),
-                "firmware_version": device.get_info(rs.camera_info.firmware_version),
-                "product_line": device.get_info(rs.camera_info.product_line),
+                "device_info": self._device_info(rs, device),
+                "sdk_version": getattr(rs, "__version__", None),
+                "sdk_option_catalog": self._option_catalog(rs),
                 "sensors": sensors,
+                "available_stream_profiles": self._stream_profiles(rs, device),
                 "streams": {
                     "color": {"width": self._config.width, "height": self._config.height, "fps": self._config.fps, "format": "bgr8"},
                     "depth": {"enabled": capture_depth, "width": self._config.depth_width or self._config.width, "height": self._config.depth_height or self._config.height, "fps": self._config.fps, "format": "z16"},
                 },
                 "configured_options": configured_options,
+                "calibration": calibration,
+                "depth_scale": self._depth_scale(rs, device),
+                "advanced_mode_json": self._advanced_mode_json(rs, device),
             }
-            color_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
-            intrinsics = color_profile.get_intrinsics()
             self._calibration = CameraCalibration(
                 matrix=np.array(
-                    [[intrinsics.fx, 0.0, intrinsics.ppx], [0.0, intrinsics.fy, intrinsics.ppy], [0.0, 0.0, 1.0]],
+                    [[color_intrinsics.fx, 0.0, color_intrinsics.ppx], [0.0, color_intrinsics.fy, color_intrinsics.ppy], [0.0, 0.0, 1.0]],
                     dtype=np.float64,
                 ),
-                dist_coeffs=np.asarray(intrinsics.coeffs, dtype=np.float64),
+                dist_coeffs=np.asarray(color_intrinsics.coeffs, dtype=np.float64),
             )
             self._pipeline = pipeline
             self._align = rs.align(rs.stream.color) if capture_depth and self._config.align_depth_to_color else None
@@ -194,9 +174,124 @@ class RealSenseCamera(CameraDevice):
                     item["description"] = rs.option_to_string(option)
                 except Exception:
                     item["description"] = name
+                if item["value"] is not None:
+                    try:
+                        item["value_description"] = sensor.get_option_value_description(option, item["value"])
+                    except Exception:
+                        item["value_description"] = None
                 options[name] = item
-            records.append({"name": sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else "", "options": options})
+            info = self._all_info_fields(rs, sensor)
+            profiles = []
+            try:
+                for profile in sensor.get_stream_profiles():
+                    try:
+                        item: dict[str, Any] = {
+                            "stream": str(profile.stream_type()),
+                            "index": int(profile.stream_index()),
+                            "format": str(profile.format()),
+                        }
+                        if profile.fps() is not None:
+                            item["fps"] = int(profile.fps())
+                        try:
+                            video = profile.as_video_stream_profile()
+                            item["width"] = int(video.width())
+                            item["height"] = int(video.height())
+                        except Exception:
+                            pass
+                        profiles.append(item)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            records.append({"info": info, "options": options, "stream_profiles": profiles})
         return records
+
+    @staticmethod
+    def _device_info(rs: Any, device: Any) -> dict[str, Any]:
+        return RealSenseCamera._all_info_fields(rs, device)
+
+    @staticmethod
+    def _all_info_fields(rs: Any, info_provider: Any) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for field in dir(rs.camera_info):
+            if field.startswith("_"):
+                continue
+            key = getattr(rs.camera_info, field, None)
+            if key is None or callable(key):
+                continue
+            try:
+                if info_provider.supports(key):
+                    result[field] = info_provider.get_info(key)
+            except Exception:
+                continue
+        return result
+
+    @staticmethod
+    def _option_catalog(rs: Any) -> list[str]:
+        return sorted(
+            name for name in dir(rs.option)
+            if not name.startswith("_") and not callable(getattr(rs.option, name, None))
+        )
+
+    @staticmethod
+    def _depth_scale(rs: Any, device: Any) -> float | None:
+        try:
+            sensor = device.first_depth_sensor()
+            if sensor and sensor.supports(rs.option.depth_units):
+                return float(sensor.get_depth_scale())
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _advanced_mode_json(rs: Any, device: Any) -> dict[str, Any] | str | None:
+        try:
+            advanced = rs.rs400_advanced_mode(device)
+            if not advanced.is_enabled():
+                return None
+            return advanced.serialize_json()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _intrinsics_payload(intrinsics: Any) -> dict[str, Any]:
+        return {
+            "width": int(intrinsics.width), "height": int(intrinsics.height),
+            "fx": float(intrinsics.fx), "fy": float(intrinsics.fy),
+            "ppx": float(intrinsics.ppx), "ppy": float(intrinsics.ppy),
+            "model": str(intrinsics.model), "coeffs": [float(value) for value in intrinsics.coeffs],
+        }
+
+    @staticmethod
+    def _extrinsics_payload(extrinsics: Any) -> dict[str, Any]:
+        return {
+            "rotation": [float(value) for value in extrinsics.rotation],
+            "translation": [float(value) for value in extrinsics.translation],
+        }
+
+    @staticmethod
+    def _stream_profiles(rs: Any, device: Any) -> list[dict[str, Any]]:
+        result: list[dict[str, Any]] = []
+        for sensor in device.query_sensors():
+            for profile in sensor.get_stream_profiles():
+                try:
+                    item: dict[str, Any] = {
+                        "sensor": sensor.get_info(rs.camera_info.name) if sensor.supports(rs.camera_info.name) else "",
+                        "stream": str(profile.stream_type()),
+                        "index": int(profile.stream_index()),
+                        "format": str(profile.format()),
+                        "fps": int(profile.fps()),
+                    }
+                    try:
+                        video = profile.as_video_stream_profile()
+                        item["width"] = int(video.width())
+                        item["height"] = int(video.height())
+                    except Exception:
+                        pass
+                    result.append(item)
+                except Exception:
+                    continue
+        return result
 
     def stop(self) -> None:
         if self._pipeline is not None:

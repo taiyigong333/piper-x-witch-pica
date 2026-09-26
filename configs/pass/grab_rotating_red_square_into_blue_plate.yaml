@@ -8,7 +8,7 @@ session:
   format_version: "1.0.0"
   # 手动递增；不同批次写入不同的 batch_<数字> 目录。
   batch_tag: 1
-  camera_parameters_file: ../cameras/piper_x_d405_d435.parameters.json
+  camera_parameters_file: ../camera/piper_x_d405_d435.parameters.json
   reverse_recording_enabled: true
   duration_s: 60
   pose_representation: xyz_rxryrz

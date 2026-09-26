@@ -9,7 +9,7 @@ session: # 一条轨迹及其落盘策略的全局配置。
   format_version: "1.0.0" # HDF5 Schema 版本；字段、单位或编码不兼容变更时必须递增。
   trajectory_id: null # 可选固定轨迹 ID；null 时自动生成 <类型>_<机器人>_<时间>_0001。
   batch_tag: 1 # 双向采集批次编号；手动递增后写入独立 batch_<编号> 目录。
-  camera_parameters_file: ../cameras/piper_x_d405_d435.parameters.json # 本次采集使用的相机参数快照；批次锁定后不可更换。
+  camera_parameters_file: ../camera/piper_x_d405_d435.parameters.json # 本次采集使用的相机参数快照；批次锁定后不可更换。
   reverse_recording_enabled: true # 是否在正向采集后继续采集反向过程。
   duration_s: 60 # 采集时长（秒）；也可由命令行 --duration 覆盖，必须大于 0。
   sim_assets: null # 仿真资产可检索 ID；仅 data_type=sim 时填写，真实采集保持 null。
