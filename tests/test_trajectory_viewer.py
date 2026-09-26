@@ -99,7 +99,9 @@ def test_viewer_lists_any_existing_forward_or_reverse_trajectory(tmp_path: Path)
 
     summaries = viewer.list_trajectories()
     assert len(summaries) == 2
-    assert next(item for item in summaries if item["path"].startswith("batch_1/"))["direction"] == "normal"
+    forward_summary = next(item for item in summaries if item["path"].startswith("batch_1/"))
+    assert forward_summary["direction"] == "normal"
+    assert forward_summary["collection"] == "20260926T120000"
 
     forward.unlink()
     reverse = collection / "reverse" / "trajectory.hdf5"
@@ -107,7 +109,9 @@ def test_viewer_lists_any_existing_forward_or_reverse_trajectory(tmp_path: Path)
     reverse.write_bytes(original.read_bytes())
     summaries = viewer.list_trajectories()
     assert len(summaries) == 2
-    assert next(item for item in summaries if item["path"].startswith("batch_1/"))["direction"] == "reverse"
+    reverse_summary = next(item for item in summaries if item["path"].startswith("batch_1/"))
+    assert reverse_summary["direction"] == "reverse"
+    assert reverse_summary["collection"] == "20260926T120000"
 
 
 def test_viewer_page_exposes_labeled_detailed_joint_and_tcp_charts() -> None:

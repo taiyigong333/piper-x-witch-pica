@@ -135,6 +135,7 @@ class TrajectoryViewer:
             }
         quality = _read_json(_quality_path(path))
         direction = _trajectory_direction(path)
+        collection = path.parent.parent.name if path.parent.name in {"forward", "reverse"} else path.parent.name
         return {
             "path": path.relative_to(self.root).as_posix(),
             "frame_count": frame_count,
@@ -143,7 +144,7 @@ class TrajectoryViewer:
             "collection_time": metadata.get("collection_time", ""),
             "quality_result": quality.get("result") if isinstance(quality, dict) else None,
             "direction": direction,
-            "collection": path.parent.name,
+            "collection": collection,
         }
 
     @staticmethod

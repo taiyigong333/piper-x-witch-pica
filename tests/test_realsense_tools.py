@@ -28,12 +28,17 @@ def test_parameter_payload_uses_selected_camera_and_current_options() -> None:
         depth_height=None,
         base_to_camera=None,
     )
-    config = SimpleNamespace(enabled_cameras=(camera_config,))
+    disabled_camera_config = SimpleNamespace(**vars(camera_config))
+    disabled_camera_config.name = "camera_disabled"
+    disabled_camera_config.enabled = False
+    disabled_camera_config.options = {"exposure": 55.0}
+    config = SimpleNamespace(cameras=(camera_config, disabled_camera_config))
 
     payload = parameter_payload(config, {"camera_front": _FakeCamera()}, "test camera")
 
     assert payload["purpose"] == "test camera"
     assert payload["cameras"][0]["options"] == {"exposure": 80.0}
+    assert payload["cameras"][1]["options"] == {"exposure": 55.0}
     assert payload["devices"]["camera_front"]["streams"]["color"]["fps"] == 30
 
 

@@ -43,7 +43,8 @@ def parameter_payload(config: CollectConfig, cameras: dict[str, RealSenseCamera]
     """只保存输入采集配置涉及的相机和当前设备实际参数。"""
 
     camera_items = []
-    for camera in config.enabled_cameras:
+    for camera in config.cameras:
+        running_camera = cameras.get(camera.name)
         item = {
             "name": camera.name,
             "driver": camera.driver,
@@ -55,7 +56,11 @@ def parameter_payload(config: CollectConfig, cameras: dict[str, RealSenseCamera]
             "color_order": camera.color_order,
             "enabled": camera.enabled,
             "align_depth_to_color": camera.align_depth_to_color,
-            "options": cameras[camera.name].parameters().get("configured_options", camera.options),
+            "options": (
+                running_camera.parameters().get("configured_options", camera.options)
+                if running_camera is not None
+                else camera.options
+            ),
         }
         if camera.depth_width is not None:
             item["depth_width"] = camera.depth_width
