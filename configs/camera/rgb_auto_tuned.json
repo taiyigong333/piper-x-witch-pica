@@ -1,0 +1,41 @@
+{
+  "purpose": "RGB 自动收敛结果",
+  "cameras": [
+    {
+      "name": "camera_front",
+      "driver": "realsense",
+      "model": "RealSense_D435",
+      "serial_number": "263022073726",
+      "width": 640,
+      "height": 480,
+      "fps": 30.0,
+      "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
+      "options": {
+        "enable_auto_exposure": 1.0,
+        "enable_auto_white_balance": 1.0
+      },
+      "depth_width": 640,
+      "depth_height": 480
+    },
+    {
+      "name": "camera_wrist_right",
+      "driver": "realsense",
+      "model": "RealSense_D405",
+      "serial_number": "419122270341",
+      "width": 640,
+      "height": 480,
+      "fps": 30.0,
+      "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
+      "options": {
+        "enable_auto_exposure": 1.0,
+        "enable_auto_white_balance": 1.0
+      },
+      "depth_width": 640,
+      "depth_height": 480
+    }
+  ]
+}
