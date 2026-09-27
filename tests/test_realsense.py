@@ -14,6 +14,12 @@ class _FakeSensor:
     def get_option(self, option: str) -> float:
         return self.values[option]
 
+    def is_option_read_only(self, option: str) -> bool:
+        return False
+
+    def set_option(self, option: str, value: float) -> None:
+        self.values[option] = value
+
     def get_info(self, key: str) -> str:
         return self.name if key == "name" else ""
 
@@ -63,3 +69,18 @@ def test_runtime_snapshot_omits_disabled_depth_stream() -> None:
         "color": {"width": 640, "height": 480, "fps": 30, "format": "bgr8"}
     }
     assert "depth_scale" not in camera.parameters()
+
+
+def test_enable_auto_exposure_sets_and_reads_back_option() -> None:
+    rs = SimpleNamespace(option=SimpleNamespace(enable_auto_exposure="enable_auto_exposure"))
+    sensor = _FakeSensor("RGB Camera", {"enable_auto_exposure": 0.0})
+    camera = object.__new__(RealSenseCamera)
+    camera._config = SimpleNamespace(name="camera_front")
+    camera._pipeline = SimpleNamespace(
+        get_active_profile=lambda: SimpleNamespace(get_device=lambda: _FakeDevice([sensor]))
+    )
+    camera._sdk = lambda: rs
+
+    camera.enable_auto_exposure()
+
+    assert sensor.values["enable_auto_exposure"] == 1.0

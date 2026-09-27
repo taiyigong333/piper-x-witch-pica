@@ -131,12 +131,22 @@ class RealSenseCamera(CameraDevice):
         option = self._resolve_option(rs, name)
         device = self._pipeline.get_active_profile().get_device()
         matched = False
+        readback: float | None = None
         for sensor in device.query_sensors():
             if sensor.supports(option):
                 matched = True
+                if sensor.is_option_read_only(option):
+                    raise DeviceError(f"{self._config.name} 的 RealSense option 只读：{name}")
                 sensor.set_option(option, float(value))
+                readback = float(sensor.get_option(option))
         if not matched:
             raise DeviceError(f"{self._config.name} 不支持 RealSense option：{name}")
+        if readback is None or abs(readback - float(value)) > 1e-6:
+            raise DeviceError(f"{self._config.name} 未能确认 RealSense option 已生效：{name}={value}")
+
+    def enable_auto_exposure(self) -> None:
+        """启用 RealSense 硬件自动曝光，并读回确认，行为对应 Viewer 的开关。"""
+        self.set_option("enable_auto_exposure", 1.0)
 
     def refresh_parameters(self, capture_depth: bool) -> dict[str, Any]:
         """重新读取当前 option，供独立参数工具在自动调参后保存。"""

@@ -52,8 +52,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # 先开启硬件自动曝光/白平衡，再等待图像反馈收敛；这与 Viewer 的操作顺序一致。
         for camera in cameras.values():
+            try:
+                camera.enable_auto_exposure()
+            except Exception:
+                # 某些设备仅在 RGB sensor 上提供此 option，后续通用设置仍会尝试可用传感器。
+                pass
             for option, value in (
-                ("enable_auto_exposure", 1.0),
                 ("enable_auto_white_balance", 1.0),
                 ("auto_exposure_priority", 0.0),
             ):
