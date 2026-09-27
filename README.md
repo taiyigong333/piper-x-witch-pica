@@ -19,6 +19,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run piper-x-collect --help
 - `configs/teleop/`：Pika Sense 遥操配置。
 - `configs/tasks/`：任务、机械臂、数据输出配置。
 - `configs/pass/`：可复制的示例配置。
+- `docs/数据存储结构说明.md`：磁盘目录、HDF5 数据集和质量文件结构。
 
 RealSense 当前参数读取和画面自动调参工具位于 `tool/realsense_camera/`，使用采集 YAML 决定需要读取的相机和参数，输出独立 JSON 到 `configs/camera/`。
 
@@ -37,6 +38,8 @@ PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 uv run pytest -q
 ```
 
 数据目录为 `data/batch_N/<采集时间>/forward` 和 `reverse`，批次根目录保存 `camera_parameters.json`。同一批次再次采集时，相机参数摘要不一致会直接拒绝。
+
+完整的数据目录和 HDF5 字段说明见 [`docs/数据存储结构说明.md`](docs/数据存储结构说明.md)。
 
 ## Piper-X 手动控制
 
