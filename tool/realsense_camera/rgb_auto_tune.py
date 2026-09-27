@@ -7,6 +7,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
+
 from .common import load_realsense_config, parameter_output_path
 
 
@@ -99,11 +102,7 @@ def initialize_realsense_rgb_auto_tuning(
         }
         locked = False
         if lock_after_tuning:
-            _set(sensor, ae, 0.0)
-            _set(sensor, awb, 0.0)
-            values["exposure"] = _set(sensor, exposure, values["exposure"])
-            values["gain"] = _set(sensor, gain, values["gain"])
-            values["white_balance"] = _set(sensor, white_balance, values["white_balance"])
+            _lock_sensor(sensor, ae, awb, exposure, gain, white_balance, values)
             locked = True
         return {
             "pipeline": pipeline,
@@ -119,6 +118,43 @@ def initialize_realsense_rgb_auto_tuning(
     except Exception:
         pipeline.stop()
         raise
+
+
+def _lock_sensor(sensor: Any, ae: Any, awb: Any, exposure: Any, gain: Any, white_balance: Any, values: dict[str, float]) -> None:
+    """在人工确认后关闭 AE/AWB，并固定确认时刻的最新收敛值。"""
+    values["exposure"] = float(sensor.get_option(exposure))
+    values["gain"] = float(sensor.get_option(gain))
+    values["white_balance"] = float(sensor.get_option(white_balance))
+    _set(sensor, ae, 0.0)
+    _set(sensor, awb, 0.0)
+    _set(sensor, exposure, values["exposure"])
+    _set(sensor, gain, values["gain"])
+    _set(sensor, white_balance, values["white_balance"])
+
+
+def _confirm_preview(results: dict[str, dict[str, Any]]) -> bool:
+    """显示收敛后的 RGB 画面，只有 s 才确认，q/ESC 放弃。"""
+    while True:
+        for name, result in results.items():
+            frames = result["pipeline"].wait_for_frames(timeout_ms=1000)
+            color_frame = frames.get_color_frame()
+            if not color_frame:
+                continue
+            image = np.asanyarray(color_frame.get_data()).copy()
+            options = result["options"]
+            cv2.putText(image, f"{name} | RGB auto tuning complete", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            cv2.putText(
+                image,
+                f"exposure {options['exposure']:.3f}  gain {options['gain']:.3f}  white balance {options['white_balance']:.3f}",
+                (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255, 255, 255), 1,
+            )
+            cv2.putText(image, "Press s to save, q or ESC to cancel", (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 220, 255), 1)
+            cv2.imshow(f"{name} | RGB auto tuning", image)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("s"):
+            return True
+        if key in (ord("q"), 27):
+            return False
 
 
 def _save_results(config: Any, results: dict[str, dict[str, Any]], name: str, purpose: str) -> Path:
@@ -145,27 +181,47 @@ def _save_results(config: Any, results: dict[str, dict[str, Any]], name: str, pu
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="RealSense RGB AE/AWB 自动收敛和可选锁定")
     parser.add_argument("--config", required=True, help="采集 YAML")
-    parser.add_argument("--name", help="保存到 configs/camera/ 的 JSON 文件名")
+    parser.add_argument("--name", required=True, help="确认后保存到 configs/camera/ 的 JSON 文件名")
     parser.add_argument("--purpose", default="RGB 自动调参结果")
     parser.add_argument("--frames", type=int, default=60, help="AE/AWB 收敛帧数，默认 60")
     parser.add_argument("--lock", action="store_true", help="读取稳定值后关闭 AE/AWB 并固定参数")
     args = parser.parse_args(argv)
     config = load_realsense_config(args.config)
     results: dict[str, dict[str, Any]] = {}
+    confirmed = False
     try:
         for camera in config.enabled_cameras:
             result = initialize_realsense_rgb_auto_tuning(
                 serial_number=camera.serial_number, width=camera.width, height=camera.height,
-                fps=int(camera.fps), convergence_frames=args.frames, lock_after_tuning=args.lock,
+                fps=int(camera.fps), convergence_frames=args.frames, lock_after_tuning=False,
             )
-            result["config_options"] = ({"exposure": result["options"]["exposure"], "gain": result["options"]["gain"], "white_balance": result["options"]["white_balance"], "enable_auto_exposure": 0.0, "enable_auto_white_balance": 0.0} if args.lock else {"enable_auto_exposure": 1.0, "enable_auto_white_balance": 1.0})
             results[camera.name] = result
-            print(f"{camera.name}: RGB={result['sensor_name'] or 'unknown'}, frames={args.frames}, options={result['options']}, locked={result['locked']}")
+            print(f"{camera.name}: RGB={result['sensor_name'] or 'unknown'}, frames={args.frames}, options={result['options']}")
+        confirmed = _confirm_preview(results)
+        if not confirmed:
+            print("已取消，未保存相机参数。")
+            return 0
+        if args.lock:
+            import pyrealsense2 as rs
+            for result in results.values():
+                _lock_sensor(
+                    result["sensor"], _option(rs, "enable_auto_exposure"), _option(rs, "enable_auto_white_balance"),
+                    _option(rs, "exposure"), _option(rs, "gain"), _option(rs, "white_balance"), result["options"],
+                )
+                result["locked"] = True
+                result["config_options"] = {
+                    "exposure": result["options"]["exposure"], "gain": result["options"]["gain"],
+                    "white_balance": result["options"]["white_balance"], "enable_auto_exposure": 0.0,
+                    "enable_auto_white_balance": 0.0,
+                }
+        else:
+            for result in results.values():
+                result["config_options"] = {"enable_auto_exposure": 1.0, "enable_auto_white_balance": 1.0}
     finally:
+        cv2.destroyAllWindows()
         for result in results.values():
             result["pipeline"].stop()
-    if args.name:
-        print(f"已保存：{_save_results(config, results, args.name, args.purpose)}")
+    print(f"已保存：{_save_results(config, results, args.name, args.purpose)}")
     return 0
 
 

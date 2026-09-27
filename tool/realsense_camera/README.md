@@ -28,7 +28,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.preview \
 
 采集使用的自动画面参数文件为 `configs/camera/piper_x_auto_image.parameters.json`。它只保存自动曝光和自动白平衡；分辨率与帧率仍由采集 YAML 控制。自动曝光开启时，适配器会忽略配置中的手动 `exposure`/`gain`；自动白平衡开启时会忽略手动 `white_balance`，避免残留值影响自动调节。
 
-第三个功能是接近 RealSense Viewer 的 RGB 自动收敛工具。它明确选择 RGB Camera 对应的 color sensor，开启 AE/AWB，采集默认 60 帧等待硬件收敛，再读取曝光、增益和白平衡：
+第三个功能是接近 RealSense Viewer 的 RGB 自动收敛工具。它明确选择 RGB Camera 对应的 color sensor，开启 AE/AWB，采集默认 60 帧等待硬件收敛，然后打开可视化确认窗口显示 RGB 画面和稳定参数：
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.rgb_auto_tune \
@@ -37,4 +37,4 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.rgb_auto_tune 
   --purpose "RGB 自动收敛结果"
 ```
 
-需要把收敛结果固定为手动参数时增加 `--lock`；不加 `--lock` 则保存自动曝光/自动白平衡开关，让后续采集继续由相机自动控制。
+按 `s` 才会保存；按 `q` 或 `ESC` 退出且不保存。需要把收敛结果固定为手动参数时增加 `--lock`，锁定动作也只会在按 `s` 确认后执行；不加 `--lock` 则保存自动曝光/自动白平衡开关，让后续采集继续由相机自动控制。
