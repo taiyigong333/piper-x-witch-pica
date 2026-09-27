@@ -27,8 +27,12 @@ def _stable(history: deque[tuple[float, float, float]], stable_frames: int) -> b
     values = np.asarray([item[0] for item in history], dtype=np.float32)
     dark = float(np.mean([item[1] for item in history]))
     bright = float(np.mean([item[2] for item in history]))
-    # Viewer 的自动曝光也需要数帧收敛；亮度变化小且没有大面积饱和才认为可保存。
-    return float(values.max() - values.min()) <= 4.0 and dark < 0.35 and bright < 0.35
+    # 用分位数和前后窗口中位数判断收敛，避免单帧噪声让状态反复跳变。
+    spread = float(np.percentile(values, 90) - np.percentile(values, 10))
+    midpoint = len(values) // 2
+    first_median = float(np.median(values[:midpoint]))
+    last_median = float(np.median(values[midpoint:]))
+    return spread <= 8.0 and abs(last_median - first_median) <= 3.0 and dark < 0.35 and bright < 0.35
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,8 +40,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", required=True, help="采集 YAML")
     parser.add_argument("--name", required=True, help="按 s 保存到 configs/camera/ 的 JSON 文件名")
     parser.add_argument("--purpose", required=True, help="保存到 JSON 的 purpose 字段")
-    parser.add_argument("--warmup-s", type=float, default=2.0, help="启动后的预热秒数（默认 2）")
-    parser.add_argument("--stable-frames", type=int, default=30, help="连续稳定帧数（默认 30）")
+    parser.add_argument("--warmup-s", type=float, default=3.0, help="启动后的预热秒数（默认 3）")
+    parser.add_argument("--stable-frames", type=int, default=45, help="连续稳定帧数（默认 45）")
     args = parser.parse_args(argv)
     if args.warmup_s < 0 or args.stable_frames < 1:
         parser.error("--warmup-s 必须非负，--stable-frames 必须为正数")
@@ -46,9 +50,13 @@ def main(argv: list[str] | None = None) -> int:
     histories = {name: deque(maxlen=args.stable_frames) for name in cameras}
     started_at = time.monotonic()
     try:
-        # 自动调参由相机硬件持续完成；预览工具不改输入采集配置。
+        # 先开启硬件自动曝光/白平衡，再等待图像反馈收敛；这与 Viewer 的操作顺序一致。
         for camera in cameras.values():
-            for option, value in (("enable_auto_exposure", 1.0), ("enable_auto_white_balance", 1.0)):
+            for option, value in (
+                ("enable_auto_exposure", 1.0),
+                ("enable_auto_white_balance", 1.0),
+                ("auto_exposure_priority", 0.0),
+            ):
                 try:
                     camera.set_option(option, value)
                 except Exception:

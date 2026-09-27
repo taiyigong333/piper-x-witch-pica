@@ -20,8 +20,10 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.preview \
   --purpose "自动调参后的现场参数"
 ```
 
-默认预热 2 秒并等待 30 个稳定帧；现场光线变化较慢时可以增加等待帧数：
+默认预热 3 秒并等待 45 个稳定帧；工具使用前后窗口中位数、亮度分位数和欠曝/过曝比例判断硬件自动调参是否收敛：
 
 ```bash
-... --warmup-s 3 --stable-frames 60
+... --warmup-s 5 --stable-frames 60
 ```
+
+采集使用的自动画面参数文件为 `configs/camera/piper_x_auto_image.parameters.json`。它只保存自动曝光、自动白平衡和自动曝光优先级；分辨率与帧率仍由采集 YAML 控制。
