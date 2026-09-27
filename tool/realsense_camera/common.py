@@ -47,8 +47,6 @@ def _create_missing_camera_parameters(path: str | Path) -> None:
         item.setdefault(
             "options",
             {
-                "exposure": 120.0,
-                "white_balance": 4600.0,
                 "enable_auto_exposure": 1.0,
                 "enable_auto_white_balance": 1.0,
             },

@@ -49,7 +49,8 @@ class RealSenseCamera(CameraDevice):
             self._pipeline = pipeline
             device = profile.get_device()
             configured_options: dict[str, Any] = {}
-            configured_items = self._config.options.items() if apply_options else ()
+            effective_options = self._effective_options(self._config.options)
+            configured_items = effective_options.items() if apply_options else ()
             for option_name, option_value in configured_items:
                 option = self._resolve_option(rs, option_name)
                 supported = False
@@ -69,7 +70,7 @@ class RealSenseCamera(CameraDevice):
                 if not supported or errors:
                     raise DeviceError(f"{self._config.name} 相机参数设置失败：{option_name}: {errors or ['sensor 不支持该 option']}")
             # 只保存本次配置实际使用的 options，避免快照写入 SDK 的完整能力目录。
-            sensors = self._read_sensor_parameters(rs, device, self._config.options)
+            sensors = self._read_sensor_parameters(rs, device, effective_options)
             color_stream = profile.get_stream(rs.stream.color).as_video_stream_profile()
             color_intrinsics = color_stream.get_intrinsics()
             calibration: dict[str, Any] = {
@@ -156,7 +157,7 @@ class RealSenseCamera(CameraDevice):
         rs = self._sdk()
         device = self._pipeline.get_active_profile().get_device()
         current: dict[str, float] = {}
-        for name in self._config.options:
+        for name in self._effective_options(self._config.options):
             option = self._resolve_option(rs, name)
             for sensor in device.query_sensors():
                 if sensor.supports(option):
@@ -166,6 +167,17 @@ class RealSenseCamera(CameraDevice):
         snapshot["configured_options"] = current
         self._parameters = snapshot
         return dict(snapshot)
+
+    @staticmethod
+    def _effective_options(options: dict[str, float]) -> dict[str, float]:
+        """自动控制开启时移除对应的手动值，避免残留值干扰 Viewer 同款自动调节。"""
+        effective = dict(options)
+        if effective.get("enable_auto_exposure", 0.0) > 0.5:
+            for name in ("exposure", "gain", "auto_gain_limit"):
+                effective.pop(name, None)
+        if effective.get("enable_auto_white_balance", 0.0) > 0.5:
+            effective.pop("white_balance", None)
+        return effective
 
     def _make_runtime_snapshot(
         self,

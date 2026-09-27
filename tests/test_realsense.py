@@ -84,3 +84,18 @@ def test_enable_auto_exposure_sets_and_reads_back_option() -> None:
     camera.enable_auto_exposure()
 
     assert sensor.values["enable_auto_exposure"] == 1.0
+
+
+def test_automatic_options_ignore_manual_exposure_and_white_balance() -> None:
+    options = {
+        "exposure": 120.0,
+        "gain": 16.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 1.0,
+        "enable_auto_white_balance": 1.0,
+    }
+
+    assert RealSenseCamera._effective_options(options) == {
+        "enable_auto_exposure": 1.0,
+        "enable_auto_white_balance": 1.0,
+    }

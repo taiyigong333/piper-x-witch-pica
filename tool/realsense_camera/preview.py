@@ -59,7 +59,6 @@ def main(argv: list[str] | None = None) -> int:
                 pass
             for option, value in (
                 ("enable_auto_white_balance", 1.0),
-                ("auto_exposure_priority", 0.0),
             ):
                 try:
                     camera.set_option(option, value)

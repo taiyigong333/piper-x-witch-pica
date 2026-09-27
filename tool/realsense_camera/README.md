@@ -26,4 +26,4 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.preview \
 ... --warmup-s 5 --stable-frames 60
 ```
 
-采集使用的自动画面参数文件为 `configs/camera/piper_x_auto_image.parameters.json`。它只保存自动曝光、自动白平衡和自动曝光优先级；分辨率与帧率仍由采集 YAML 控制。
+采集使用的自动画面参数文件为 `configs/camera/piper_x_auto_image.parameters.json`。它只保存自动曝光和自动白平衡；分辨率与帧率仍由采集 YAML 控制。自动曝光开启时，适配器会忽略配置中的手动 `exposure`/`gain`；自动白平衡开启时会忽略手动 `white_balance`，避免残留值影响自动调节。
