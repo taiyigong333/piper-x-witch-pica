@@ -38,3 +38,12 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.rgb_auto_tune 
 ```
 
 按 `s` 才会保存；按 `q` 或 `ESC` 退出且不保存。需要把收敛结果固定为手动参数时增加 `--lock`，锁定动作也只会在按 `s` 确认后执行；不加 `--lock` 则保存自动曝光/自动白平衡开关，让后续采集继续由相机自动控制。
+
+预览已经保存的相机参数及其实际画面：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview \
+  --name piper_x_balanced_fixed.parameters.json
+```
+
+工具会读取 `configs/camera/` 中的分辨率、帧率、序列号和 options，并将参数应用到对应相机；按 `q` 或 `ESC` 退出。
