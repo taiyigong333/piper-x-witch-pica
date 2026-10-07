@@ -226,6 +226,29 @@ class RealSenseCamera(CameraDevice):
                         pass
         return values
 
+    def color_option_ranges(self, names: tuple[str, ...]) -> dict[str, tuple[float, float, float]]:
+        """读取 RGB sensor 支持 option 的范围，供 GUI 滑块使用。"""
+        if self._pipeline is None:
+            raise DeviceError(f"RealSense {self._config.name} 尚未启动。")
+        rs = self._sdk()
+        device = self._pipeline.get_active_profile().get_device()
+        ranges: dict[str, tuple[float, float, float]] = {}
+        for name in names:
+            try:
+                option = self._resolve_option(rs, name)
+            except DeviceError:
+                continue
+            for sensor in device.query_sensors():
+                if not sensor.supports(option):
+                    continue
+                try:
+                    value = sensor.get_option_range(option)
+                    ranges[name] = (float(value.min), float(value.max), float(value.step))
+                    break
+                except Exception:
+                    continue
+        return ranges
+
     def enable_auto_exposure(self) -> None:
         """启用 RealSense 硬件自动曝光，并读回确认，行为对应 Viewer 的开关。"""
         self.set_option("enable_auto_exposure", 1.0)

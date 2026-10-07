@@ -46,6 +46,15 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview 
   --name piper_x_balanced_fixed.parameters.json
 ```
 
+如果系统 OpenCV/Qt 窗口不可用，使用纯 Tkinter 版本。它不调用 OpenCV HighGUI，也不访问 `/dev/video*`，画面仍通过 RealSense SDK 读取：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview_gui \
+  --name piper_x_balanced_fixed.parameters.json
+```
+
+Tkinter 版本每台相机一个窗口，支持分辨率、曝光、增益、白平衡、亮度、对比度、饱和度、锐度、Gamma、色调、电源频率滑块，自动曝光/自动白平衡复选框，以及 GUI 另存为。
+
 工具会读取 `configs/camera/` 中的分辨率、帧率、序列号和 options，并将参数应用到对应相机；按 `q` 或 `ESC` 退出。所有修改和保存均通过窗口完成，不使用命令行输入。
 
 预览窗口还支持运行时修改参数。先按 `Tab` 选择相机，再使用：
