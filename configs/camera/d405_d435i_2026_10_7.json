@@ -1,0 +1,61 @@
+{
+  "purpose": "用于数据采集的参数2026/10/7",
+  "cameras": [
+    {
+      "name": "camera_front",
+      "driver": "realsense",
+      "model": "RealSense_D435",
+      "serial_number": "263022073726",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
+      "depth_width": 640,
+      "depth_height": 480,
+      "options": {
+        "exposure": 150.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0,
+        "gain": 48.0,
+        "brightness": 0.0,
+        "contrast": 50.0,
+        "saturation": 64.0,
+        "sharpness": 50.0,
+        "gamma": 300.0,
+        "hue": 0.0,
+        "power_line_frequency": 3.0
+      }
+    },
+    {
+      "name": "camera_wrist_right",
+      "driver": "realsense",
+      "model": "RealSense_D405",
+      "serial_number": "419122270341",
+      "width": 640,
+      "height": 480,
+      "fps": 30,
+      "color_order": "rgb",
+      "enabled": true,
+      "align_depth_to_color": true,
+      "depth_width": 640,
+      "depth_height": 480,
+      "options": {
+        "exposure": 4000.0,
+        "white_balance": 4600.0,
+        "enable_auto_exposure": 0.0,
+        "enable_auto_white_balance": 0.0,
+        "gain": 64.0,
+        "brightness": 0.0,
+        "contrast": 50.0,
+        "saturation": 64.0,
+        "sharpness": 49.0,
+        "gamma": 300.0,
+        "hue": 0.0,
+        "power_line_frequency": 3.0
+      }
+    }
+  ]
+}

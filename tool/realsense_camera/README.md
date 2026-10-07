@@ -53,6 +53,15 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview_
   --name piper_x_balanced_fixed.parameters.json
 ```
 
+如果 Tkinter 窗口在当前桌面环境中仍然停留在“等待 RealSense RGB 图像”，或右侧参数面板过长，优先使用本地网页版本。它通过浏览器显示 MJPEG 实时画面，右侧参数面板可以独立滚动，不依赖 Tkinter 控件刷新：
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview_web \
+  --name piper_x_balanced_fixed.parameters.json
+```
+
+程序默认打开 `http://127.0.0.1:8765/`；如果不希望自动打开浏览器，增加 `--no-browser`。网页中的取帧错误会直接显示在对应相机卡片状态栏，便于区分“浏览器显示问题”和“RealSense 没有返回 RGB 帧”。参数行同时显示输入值和 `当前值 / Current`；自动曝光或自动白平衡运行时，硬件实时变化后的曝光、增益、白平衡等数值会自动刷新到侧边栏。
+
 Tkinter 版本每台相机一个窗口，支持分辨率、曝光、增益、白平衡、亮度、对比度、饱和度、锐度、Gamma、色调、电源频率调节。参数行同时显示中文/英文名、RealSense 实际允许范围、滑块和数字输入框；输入数字后按回车或点击“应用”即可直接写入 RGB sensor。自动曝光/自动白平衡仍通过复选框控制，并支持 GUI 另存为。
 
 工具会读取 `configs/camera/` 中的分辨率、帧率、序列号和 options，并将参数应用到对应相机；按 `q` 或 `ESC` 退出。所有修改和保存均通过窗口完成，不使用命令行输入。
