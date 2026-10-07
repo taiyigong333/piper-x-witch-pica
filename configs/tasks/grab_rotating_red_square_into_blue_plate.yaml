@@ -8,7 +8,7 @@ session:
   format_version: "1.0.0"
   # 手动递增；不同批次写入不同的 batch_<数字> 目录。
   batch_tag: 2
-  camera_parameters_file: /home/cv/gcj/project/data_collect/piper-x-witch-pica/configs/camera/piper_x_balanced_brighter.parameters.json
+  camera_parameters_file: /home/cv/gcj/project/data_collect/piper-x-witch-pica/configs/camera/d405_d435i_2026_10_7.json
   reverse_recording_enabled: true
   duration_s: 60
   pose_representation: xyz_rxryrz
