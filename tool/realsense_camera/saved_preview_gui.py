@@ -8,6 +8,7 @@ import copy
 import json
 import queue
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -22,16 +23,16 @@ from taiyi_piper_x_collect.errors import DeviceError
 
 
 PARAMETERS = (
-    ("exposure", "曝光时间", 10.0),
-    ("gain", "增益", 1.0),
-    ("white_balance", "白平衡", 100.0),
-    ("brightness", "亮度", 1.0),
-    ("contrast", "对比度", 1.0),
-    ("saturation", "饱和度", 1.0),
-    ("sharpness", "锐度", 1.0),
+    ("exposure", "曝光时间 / Exposure", 10.0),
+    ("gain", "增益 / Gain", 1.0),
+    ("white_balance", "白平衡 / White balance", 100.0),
+    ("brightness", "亮度 / Brightness", 1.0),
+    ("contrast", "对比度 / Contrast", 1.0),
+    ("saturation", "饱和度 / Saturation", 1.0),
+    ("sharpness", "锐度 / Sharpness", 1.0),
     ("gamma", "Gamma", 1.0),
-    ("hue", "色调", 1.0),
-    ("power_line_frequency", "电源频率", 1.0),
+    ("hue", "色调 / Hue", 1.0),
+    ("power_line_frequency", "电源频率 / Power line frequency", 1.0),
 )
 
 
@@ -83,7 +84,9 @@ class CameraPreview:
             "enable_auto_exposure", "enable_auto_white_balance"
         )))
         self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=1)
+        self.status_messages: queue.Queue[str] = queue.Queue()
         self.closed = threading.Event()
+        self._updating_parameter = False
         self.status = tk.StringVar(value="相机已连接")
         self.window = tk.Toplevel(app.root)
         self.window.title(f"RealSense 参数预览 | {config.name}")
@@ -131,17 +134,35 @@ class CameraPreview:
         values.pack(fill="x", pady=6)
         values.columnconfigure(1, weight=1)
         self.scales: dict[str, tk.Scale] = {}
-        ranges = self.camera.color_option_ranges(tuple(name for name, _, _ in PARAMETERS))
-        for row, (name, label, step) in enumerate(PARAMETERS):
-            if name not in self.config.options or name not in ranges:
+        self.value_vars: dict[str, tk.StringVar] = {}
+        self.ranges = self.camera.color_option_ranges(tuple(name for name, _, _ in PARAMETERS))
+        row = 0
+        for name, label, step in PARAMETERS:
+            if name not in self.config.options or name not in self.ranges:
                 continue
-            minimum, maximum, sdk_step = ranges[name]
+            minimum, maximum, sdk_step = self.ranges[name]
             ttk.Label(values, text=label).grid(row=row, column=0, sticky="w", padx=(0, 8))
+            value_var = tk.StringVar(value=self._format_value(self.config.options[name]))
+            self.value_vars[name] = value_var
+            entry = ttk.Entry(values, textvariable=value_var, width=10)
+            entry.grid(row=row, column=1, sticky="w")
+            entry.bind("<Return>", lambda _event, option=name: self._apply_entry(option))
+            ttk.Button(values, text="应用", command=lambda option=name: self._apply_entry(option)).grid(
+                row=row, column=2, padx=(4, 4)
+            )
+            ttk.Label(values, text=f"范围: {self._format_value(minimum)} – {self._format_value(maximum)}").grid(
+                row=row, column=3, sticky="w"
+            )
             scale = tk.Scale(values, from_=minimum, to=maximum, resolution=max(sdk_step, step), orient="horizontal", showvalue=True,
                              command=lambda raw, option=name: self._set_parameter(option, float(raw)))
-            scale.set(self.config.options[name])
-            scale.grid(row=row, column=1, sticky="ew")
             self.scales[name] = scale
+            scale.grid(row=row + 1, column=0, columnspan=4, sticky="ew")
+            self._updating_parameter = True
+            try:
+                scale.set(self.config.options[name])
+            finally:
+                self._updating_parameter = False
+            row += 2
 
         ttk.Button(panel, text="另存为新参数文件…", command=self._save_as).pack(fill="x", pady=(12, 6))
         ttk.Label(panel, textvariable=self.status, wraplength=380).pack(fill="x", anchor="w")
@@ -159,11 +180,33 @@ class CameraPreview:
                         pass
                     self.frames.put_nowait(frame)
             except DeviceError as error:
-                self.status.set(f"相机取帧异常：{error}")
+                self._post_status(f"相机取帧异常：{error}")
+                time.sleep(0.05)
+            except Exception as error:
+                self._post_status(f"相机取帧异常：{error}")
+                time.sleep(0.05)
+
+    @staticmethod
+    def _format_value(value: float) -> str:
+        return f"{value:g}"
+
+    def _post_status(self, message: str) -> None:
+        self.status_messages.put(message)
+
+    def _apply_entry(self, name: str) -> None:
+        try:
+            self._set_parameter(name, float(self.value_vars[name].get()))
+        except (KeyError, ValueError):
+            self._post_status(f"参数 {name} 不是有效数字")
 
     def _refresh(self) -> None:
         if self.closed.is_set():
             return
+        try:
+            while True:
+                self.status.set(self.status_messages.get_nowait())
+        except queue.Empty:
+            pass
         try:
             frame = self.frames.get_nowait()
         except queue.Empty:
@@ -180,8 +223,13 @@ class CameraPreview:
 
     def _set_parameter(self, name: str, value: float) -> None:
         try:
+            minimum, maximum, _step = self.ranges[name]
+            if not minimum <= value <= maximum:
+                raise ValueError(f"有效范围为 {minimum:g} – {maximum:g}")
             self.camera.set_color_option(name, value)
             self.config.options[name] = value
+            if not self._updating_parameter:
+                self.value_vars[name].set(self._format_value(value))
             self.status.set(f"已应用 {name} = {value:g}")
         except Exception as error:
             self.status.set(f"设置 {name} 失败：{error}")
