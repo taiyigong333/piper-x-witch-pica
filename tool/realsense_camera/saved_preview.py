@@ -103,6 +103,55 @@ def _edit_from_terminal(config: CameraConfig, camera: RealSenseCamera) -> None:
             print(f"{option_name} 修改失败：{error}")
 
 
+def _panel_button(panel: np.ndarray, y: int, label: str, value: str, x: int = 18) -> tuple[int, int, int, int]:
+    left, top, right, bottom = x, y, 170, y + 34
+    cv2.rectangle(panel, (left, top), (right, bottom), (65, 75, 90), -1)
+    cv2.rectangle(panel, (left, top), (right, bottom), (140, 150, 165), 1)
+    cv2.putText(panel, label, (left + 10, top + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (240, 240, 240), 1)
+    cv2.putText(panel, value, (185, top + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (120, 230, 255), 1)
+    return left, top, right, bottom
+
+
+def _render_window(image: np.ndarray, config: CameraConfig, purpose: str) -> np.ndarray:
+    panel_width = 390
+    panel = np.full((image.shape[0], panel_width, 3), (30, 35, 45), dtype=np.uint8)
+    cv2.putText(panel, config.name, (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (0, 255, 0), 2)
+    cv2.putText(panel, "Camera parameters", (18, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
+    _panel_button(panel, 78, "Exposure", f"{config.options.get('exposure', 0):.1f}")
+    _panel_button(panel, 122, "Gain", f"{config.options.get('gain', 0):.1f}")
+    _panel_button(panel, 166, "White balance", f"{config.options.get('white_balance', 0):.1f}")
+    _panel_button(panel, 220, "Auto exposure", "ON" if config.options.get("enable_auto_exposure", 0) > 0.5 else "OFF")
+    _panel_button(panel, 264, "Auto white balance", "ON" if config.options.get("enable_auto_white_balance", 0) > 0.5 else "OFF")
+    cv2.rectangle(panel, (18, 320), (300, 362), (35, 115, 75), -1)
+    cv2.putText(panel, "Save as new file", (35, 348), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (240, 255, 240), 1)
+    cv2.putText(panel, "Click buttons to edit", (18, 405), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
+    cv2.putText(panel, "i: direct numeric input", (18, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
+    cv2.putText(panel, "q / ESC: quit", (18, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
+    if purpose:
+        cv2.putText(panel, purpose[:42], (18, image.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (170, 180, 195), 1)
+    return np.hstack((image, panel))
+
+
+def _apply_panel_action(action: str, config: CameraConfig, camera: RealSenseCamera) -> None:
+    actions = {
+        "exposure_down": ("exposure", -10.0), "exposure_up": ("exposure", 10.0),
+        "gain_down": ("gain", -1.0), "gain_up": ("gain", 1.0),
+        "white_balance_down": ("white_balance", -100.0), "white_balance_up": ("white_balance", 100.0),
+    }
+    if action in actions:
+        option, delta = actions[action]
+        if option not in config.options:
+            return
+        value = max(0.0, config.options[option] + delta)
+    elif action in {"auto_exposure", "auto_white_balance"}:
+        option = "enable_auto_exposure" if action == "auto_exposure" else "enable_auto_white_balance"
+        value = 0.0 if config.options.get(option, 0.0) > 0.5 else 1.0
+    else:
+        return
+    camera.set_option(option, value)
+    config.options[option] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="预览已保存 RealSense 参数对应的相机画面")
     parser.add_argument("--name", required=True, help="configs/camera/ 下的 JSON 文件名")
@@ -115,75 +164,69 @@ def main(argv: list[str] | None = None) -> int:
             camera.start(capture_depth=False, apply_options=True)
             cameras[config.name] = camera
         purpose = str(payload.get("purpose", ""))
-        selected = 0
         config_by_name = {config.name: config for config in camera_configs}
         names = list(cameras)
+        save_request: list[str] = []
+
+        def save_from_panel() -> None:
+            try:
+                output_name = input("请输入另存为文件名（configs/camera/ 下的 JSON）：").strip()
+                output_purpose = input("请输入 purpose（直接回车沿用当前用途）：").strip() or purpose
+                output = _save_as(payload, camera_configs, cameras, output_name, output_purpose, args.name)
+                print(f"已另存为：{output}")
+            except (EOFError, KeyboardInterrupt):
+                print("已取消另存为。")
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                print(f"另存为失败：{error}")
+
+        def on_mouse(camera_name: str, event: int, x: int, y: int, _flags: int, _param: Any) -> None:
+            if event != cv2.EVENT_LBUTTONUP:
+                return
+            config = config_by_name[camera_name]
+            camera = cameras[camera_name]
+            image_width = config.width
+            panel_x = x - image_width
+            if panel_x < 0:
+                return
+            action = None
+            if 78 <= y < 112:
+                action = "exposure_down" if panel_x < 195 else "exposure_up"
+            elif 122 <= y < 156:
+                action = "gain_down" if panel_x < 195 else "gain_up"
+            elif 166 <= y < 200:
+                action = "white_balance_down" if panel_x < 195 else "white_balance_up"
+            elif 220 <= y < 254:
+                action = "auto_exposure"
+            elif 264 <= y < 298:
+                action = "auto_white_balance"
+            elif 320 <= y < 362:
+                save_request.append("save")
+            try:
+                if action:
+                    _apply_panel_action(action, config, camera)
+            except Exception as error:
+                print(f"{camera_name} 参数修改失败：{error}")
+        for name in names:
+            cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+            cv2.setMouseCallback(name, on_mouse, name)
         while True:
-            for index, (name, camera) in enumerate(cameras.items()):
+            for name, camera in cameras.items():
                 image = np.asarray(camera.read().color).copy()
                 config = config_by_name[name]
-                marker = "[selected]" if index == selected else ""
-                cv2.putText(image, f"{name} {marker}", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                if purpose:
-                    cv2.putText(image, purpose[:90], (12, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-                options = config.options
-                cv2.putText(
-                    image,
-                    f"exp={options.get('exposure', 0):.1f} gain={options.get('gain', 0):.1f} wb={options.get('white_balance', 0):.1f} AE={int(options.get('enable_auto_exposure', 0))} AWB={int(options.get('enable_auto_white_balance', 0))}",
-                    (12, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1,
-                )
-                if index == selected:
-                    cv2.putText(image, "Tab camera | i input | e/E exp | g/G gain | w/W WB | a AE | b AWB | s save | q quit", (12, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1)
-                cv2.imshow(f"{name} | saved parameters | q: quit", image)
+                cv2.imshow(name, _render_window(image, config, purpose))
             key = cv2.waitKey(1) & 0xFF
-            if key == 9 and names:
-                selected = (selected + 1) % len(names)
-                continue
-            name = names[selected]
-            config = config_by_name[name]
-            camera = cameras[name]
-            if key == ord("i"):
+            if key == ord("i") and names:
                 try:
-                    _edit_from_terminal(config, camera)
+                    name = names[0]
+                    _edit_from_terminal(config_by_name[name], cameras[name])
                 except (EOFError, KeyboardInterrupt):
                     print("已取消直接输入。"); print()
                 continue
-            option_actions = {
-                ord("e"): ("exposure", -10.0), ord("E"): ("exposure", 10.0),
-                ord("g"): ("gain", -1.0), ord("G"): ("gain", 1.0),
-                ord("w"): ("white_balance", -100.0), ord("W"): ("white_balance", 100.0),
-            }
-            if key in option_actions:
-                option_name, delta = option_actions[key]
-                if option_name not in config.options:
-                    print(f"{name} 未保存 {option_name}，无法调整。")
-                    continue
-                value = max(0.0, config.options[option_name] + delta)
-                try:
-                    camera.set_option(option_name, value)
-                    config.options[option_name] = value
-                except Exception as error:
-                    print(f"{name} 修改 {option_name} 失败：{error}")
-                continue
-            if key == ord("a") or key == ord("b"):
-                option_name = "enable_auto_exposure" if key == ord("a") else "enable_auto_white_balance"
-                value = 0.0 if config.options.get(option_name, 0.0) > 0.5 else 1.0
-                try:
-                    camera.set_option(option_name, value)
-                    config.options[option_name] = value
-                except Exception as error:
-                    print(f"{name} 修改 {option_name} 失败：{error}")
-                continue
             if key == ord("s"):
-                try:
-                    output_name = input("请输入另存为文件名（configs/camera/ 下的 JSON）：").strip()
-                    output_purpose = input("请输入 purpose（直接回车沿用当前用途）：").strip() or purpose
-                    output = _save_as(payload, camera_configs, cameras, output_name, output_purpose, args.name)
-                    print(f"已另存为：{output}")
-                except (EOFError, KeyboardInterrupt):
-                    print("已取消另存为。")
-                except (OSError, ValueError, json.JSONDecodeError) as error:
-                    print(f"另存为失败：{error}")
+                save_request.append("save")
+            if save_request:
+                save_request.clear()
+                save_from_panel()
                 continue
             if key in (ord("q"), 27):
                 break
