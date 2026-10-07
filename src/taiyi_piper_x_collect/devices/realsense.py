@@ -145,6 +145,64 @@ class RealSenseCamera(CameraDevice):
         if readback is None or abs(readback - float(value)) > 1e-6:
             raise DeviceError(f"{self._config.name} 未能确认 RealSense option 已生效：{name}={value}")
 
+    def set_color_option(self, name: str, value: float) -> None:
+        """仅向 RGB/Color sensor 写入画面参数，避免误改 Stereo sensor。"""
+        if self._pipeline is None:
+            raise DeviceError(f"RealSense {self._config.name} 尚未启动。")
+        rs = self._sdk()
+        option = self._resolve_option(rs, name)
+        device = self._pipeline.get_active_profile().get_device()
+        candidates = []
+        for sensor in device.query_sensors():
+            try:
+                key = getattr(rs.camera_info, "name")
+                sensor_name = str(sensor.get_info(key)) if sensor.supports(key) else ""
+            except Exception:
+                sensor_name = ""
+            if ("rgb" in sensor_name.lower() or "color" in sensor_name.lower()) and sensor.supports(option):
+                candidates.append(sensor)
+        if not candidates:
+            raise DeviceError(f"{self._config.name} 未找到支持 {name} 的 RGB sensor")
+        for sensor in candidates:
+            if sensor.is_option_read_only(option):
+                raise DeviceError(f"{self._config.name} 的 RGB option 只读：{name}")
+            sensor.set_option(option, float(value))
+            readback = float(sensor.get_option(option))
+            if abs(readback - float(value)) > 1e-6:
+                raise DeviceError(f"{self._config.name} 未能确认 RGB option 已生效：{name}={value}")
+
+    def color_options(self, names: tuple[str, ...]) -> dict[str, float]:
+        """读取 RGB sensor 支持的画面参数，不访问 Stereo/Depth sensor。"""
+        if self._pipeline is None:
+            raise DeviceError(f"RealSense {self._config.name} 尚未启动。")
+        rs = self._sdk()
+        device = self._pipeline.get_active_profile().get_device()
+        sensors = []
+        for sensor in device.query_sensors():
+            try:
+                key = getattr(rs.camera_info, "name")
+                sensor_name = str(sensor.get_info(key)) if sensor.supports(key) else ""
+            except Exception:
+                sensor_name = ""
+            if "rgb" in sensor_name.lower() or "color" in sensor_name.lower():
+                sensors.append(sensor)
+        if not sensors:
+            raise DeviceError(f"{self._config.name} 未找到 RGB/Color sensor")
+        values: dict[str, float] = {}
+        for name in names:
+            try:
+                option = self._resolve_option(rs, name)
+            except DeviceError:
+                continue
+            for sensor in sensors:
+                if sensor.supports(option):
+                    try:
+                        values[name] = float(sensor.get_option(option))
+                        break
+                    except Exception:
+                        pass
+        return values
+
     def enable_auto_exposure(self) -> None:
         """启用 RealSense 硬件自动曝光，并读回确认，行为对应 Viewer 的开关。"""
         self.set_option("enable_auto_exposure", 1.0)

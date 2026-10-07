@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,80 +67,58 @@ def _save_as(payload: dict[str, Any], camera_configs: list[CameraConfig], camera
         if not isinstance(item, dict) or item.get("name") not in by_name:
             continue
         config = by_name[str(item["name"])]
+        item["width"], item["height"], item["fps"] = config.width, config.height, config.fps
         item["options"] = dict(config.options)
     updated["purpose"] = purpose
     target.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return target
 
 
-def _edit_from_terminal(config: CameraConfig, camera: RealSenseCamera) -> None:
-    """允许直接输入数值；空输入保持当前值，输入错误不改变设备。"""
-    print(f"正在编辑 {config.name}，直接回车保持当前值。")
-    prompts = (
-        ("exposure", "曝光"), ("gain", "增益"), ("white_balance", "白平衡"),
-        ("enable_auto_exposure", "自动曝光(0/1)"), ("enable_auto_white_balance", "自动白平衡(0/1)"),
-    )
-    updates: dict[str, float] = {}
-    for option_name, label in prompts:
-        if option_name not in config.options:
-            continue
-        raw = input(f"{label} [{config.options[option_name]}]: ").strip()
-        if not raw:
-            continue
-        try:
-            value = float(raw)
-            if option_name.startswith("enable_") and value not in (0.0, 1.0):
-                raise ValueError("自动开关只能输入 0 或 1")
-            if value < 0:
-                raise ValueError("参数不能为负数")
-            updates[option_name] = value
-        except ValueError as error:
-            print(f"{label} 输入无效：{error}")
-    for option_name, value in updates.items():
-        try:
-            camera.set_option(option_name, value)
-            config.options[option_name] = value
-        except Exception as error:
-            print(f"{option_name} 修改失败：{error}")
+PARAM_ROWS = (
+    ("exposure", "曝光", 10.0), ("gain", "增益", 1.0), ("white_balance", "白平衡", 100.0),
+    ("brightness", "亮度", 1.0), ("contrast", "对比度", 1.0), ("saturation", "饱和度", 1.0),
+    ("sharpness", "锐度", 1.0), ("gamma", "Gamma", 1.0), ("hue", "色调", 1.0),
+    ("power_line_frequency", "电源频率", 1.0),
+)
 
 
-def _panel_button(panel: np.ndarray, y: int, label: str, value: str, x: int = 18) -> tuple[int, int, int, int]:
-    left, top, right, bottom = x, y, 170, y + 34
+def _panel_button(panel: np.ndarray, y: int, label: str, value: str, x: int = 14) -> tuple[int, int, int, int]:
+    left, top, right, bottom = x, y, 286, y + 25
     cv2.rectangle(panel, (left, top), (right, bottom), (65, 75, 90), -1)
     cv2.rectangle(panel, (left, top), (right, bottom), (140, 150, 165), 1)
-    cv2.putText(panel, label, (left + 10, top + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (240, 240, 240), 1)
-    cv2.putText(panel, value, (185, top + 23), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (120, 230, 255), 1)
+    cv2.putText(panel, label, (left + 8, top + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (240, 240, 240), 1)
+    cv2.putText(panel, value, (left + 178, top + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (120, 230, 255), 1)
+    cv2.putText(panel, "-", (left + 235, top + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (245, 245, 245), 1)
+    cv2.putText(panel, "+", (left + 263, top + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (245, 245, 245), 1)
     return left, top, right, bottom
 
 
 def _render_window(image: np.ndarray, config: CameraConfig, purpose: str) -> np.ndarray:
-    panel_width = 390
+    panel_width = 310
     panel = np.full((image.shape[0], panel_width, 3), (30, 35, 45), dtype=np.uint8)
     cv2.putText(panel, config.name, (18, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.78, (0, 255, 0), 2)
-    cv2.putText(panel, "Camera parameters", (18, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 220, 220), 1)
-    _panel_button(panel, 78, "Exposure", f"{config.options.get('exposure', 0):.1f}")
-    _panel_button(panel, 122, "Gain", f"{config.options.get('gain', 0):.1f}")
-    _panel_button(panel, 166, "White balance", f"{config.options.get('white_balance', 0):.1f}")
-    _panel_button(panel, 220, "Auto exposure", "ON" if config.options.get("enable_auto_exposure", 0) > 0.5 else "OFF")
-    _panel_button(panel, 264, "Auto white balance", "ON" if config.options.get("enable_auto_white_balance", 0) > 0.5 else "OFF")
-    cv2.rectangle(panel, (18, 320), (300, 362), (35, 115, 75), -1)
-    cv2.putText(panel, "Save as new file", (35, 348), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (240, 255, 240), 1)
-    cv2.putText(panel, "Click buttons to edit", (18, 405), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
-    cv2.putText(panel, "i: direct numeric input", (18, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
-    cv2.putText(panel, "q / ESC: quit", (18, 455), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (180, 190, 205), 1)
+    cv2.putText(panel, f"分辨率 {config.width}x{config.height}（点击修改）", (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1)
+    for index, (option, label, _step) in enumerate(PARAM_ROWS):
+        if option in config.options:
+            _panel_button(panel, 70 + index * 28, label, f"{config.options[option]:.1f}")
+    base = 70 + len(PARAM_ROWS) * 28
+    _panel_button(panel, base, "自动曝光", "ON" if config.options.get("enable_auto_exposure", 0) > 0.5 else "OFF")
+    _panel_button(panel, base + 31, "自动白平衡", "ON" if config.options.get("enable_auto_white_balance", 0) > 0.5 else "OFF")
+    cv2.rectangle(panel, (14, base + 64), (286, base + 98), (35, 115, 75), -1)
+    cv2.putText(panel, "另存为新参数文件", (38, base + 87), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (240, 255, 240), 1)
+    cv2.putText(panel, "数值行左/右侧点击 - / +", (14, base + 119), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 190, 205), 1)
+    cv2.putText(panel, "点击数值可直接输入", (14, base + 140), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 190, 205), 1)
+    cv2.putText(panel, "q / ESC: 退出", (14, base + 161), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 190, 205), 1)
     if purpose:
         cv2.putText(panel, purpose[:42], (18, image.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (170, 180, 195), 1)
     return np.hstack((image, panel))
 
 
 def _apply_panel_action(action: str, config: CameraConfig, camera: RealSenseCamera) -> None:
-    actions = {
-        "exposure_down": ("exposure", -10.0), "exposure_up": ("exposure", 10.0),
-        "gain_down": ("gain", -1.0), "gain_up": ("gain", 1.0),
-        "white_balance_down": ("white_balance", -100.0), "white_balance_up": ("white_balance", 100.0),
-    }
-    if action in actions:
-        option, delta = actions[action]
+    if action.endswith("_down") or action.endswith("_up"):
+        option = action.removesuffix("_down").removesuffix("_up")
+        delta = next((step for name, _label, step in PARAM_ROWS if name == option), 0.0)
+        delta = -delta if action.endswith("_down") else delta
         if option not in config.options:
             return
         value = max(0.0, config.options[option] + delta)
@@ -148,8 +127,69 @@ def _apply_panel_action(action: str, config: CameraConfig, camera: RealSenseCame
         value = 0.0 if config.options.get(option, 0.0) > 0.5 else 1.0
     else:
         return
-    camera.set_option(option, value)
+    camera.set_color_option(option, value)
     config.options[option] = value
+
+
+def _edit_value_dialog(config: CameraConfig, camera: RealSenseCamera, option: str) -> None:
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog
+    root = tk.Tk(); root.withdraw()
+    try:
+        value = simpledialog.askfloat(
+            "修改相机参数", f"{config.name} / {option}", initialvalue=config.options.get(option, 0.0), parent=root
+        )
+        if value is None:
+            return
+        if value < 0:
+            messagebox.showerror("参数无效", "参数不能为负数。", parent=root); return
+        try:
+            camera.set_color_option(option, value)
+        except Exception as error:
+            messagebox.showerror("设置失败", str(error), parent=root); return
+        config.options[option] = value
+    finally:
+        root.destroy()
+
+
+def _edit_resolution_dialog(config: CameraConfig, camera: RealSenseCamera) -> None:
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog
+    root = tk.Tk(); root.withdraw()
+    try:
+        width = simpledialog.askinteger("修改分辨率", "宽度：", initialvalue=config.width, minvalue=160, parent=root)
+        if width is None:
+            return
+        height = simpledialog.askinteger("修改分辨率", "高度：", initialvalue=config.height, minvalue=120, parent=root)
+        if height is None:
+            return
+        camera.stop()
+        object.__setattr__(config, "width", width)
+        object.__setattr__(config, "height", height)
+        camera.start(capture_depth=False, apply_options=True)
+    except Exception as error:
+        messagebox.showerror("分辨率设置失败", str(error), parent=root)
+    finally:
+        root.destroy()
+
+
+def _save_dialog(payload: dict[str, Any], camera_configs: list[CameraConfig], cameras: dict[str, RealSenseCamera], source_name: str, purpose: str) -> None:
+    import tkinter as tk
+    from tkinter import messagebox, simpledialog
+    root = tk.Tk(); root.withdraw()
+    try:
+        default = f"camera_tuned_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        name = simpledialog.askstring("另存为", "新参数文件名（仅 JSON 文件名）：", initialvalue=default, parent=root)
+        if not name:
+            return
+        new_purpose = simpledialog.askstring("用途", "purpose：", initialvalue=purpose, parent=root) or purpose
+        try:
+            output = _save_as(payload, camera_configs, cameras, name.strip(), new_purpose, source_name)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("保存失败", str(error), parent=root); return
+        messagebox.showinfo("保存成功", f"已另存为：{output.name}", parent=root)
+    finally:
+        root.destroy()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -162,22 +202,12 @@ def main(argv: list[str] | None = None) -> int:
         for config in camera_configs:
             camera = RealSenseCamera(config)
             camera.start(capture_depth=False, apply_options=True)
+            supported = camera.color_options(tuple(option for option, _label, _step in PARAM_ROWS) + ("enable_auto_exposure", "enable_auto_white_balance"))
+            config.options.update(supported)
             cameras[config.name] = camera
         purpose = str(payload.get("purpose", ""))
         config_by_name = {config.name: config for config in camera_configs}
         names = list(cameras)
-        save_request: list[str] = []
-
-        def save_from_panel() -> None:
-            try:
-                output_name = input("请输入另存为文件名（configs/camera/ 下的 JSON）：").strip()
-                output_purpose = input("请输入 purpose（直接回车沿用当前用途）：").strip() or purpose
-                output = _save_as(payload, camera_configs, cameras, output_name, output_purpose, args.name)
-                print(f"已另存为：{output}")
-            except (EOFError, KeyboardInterrupt):
-                print("已取消另存为。")
-            except (OSError, ValueError, json.JSONDecodeError) as error:
-                print(f"另存为失败：{error}")
 
         def on_mouse(camera_name: str, event: int, x: int, y: int, _flags: int, _param: Any) -> None:
             if event != cv2.EVENT_LBUTTONUP:
@@ -188,19 +218,21 @@ def main(argv: list[str] | None = None) -> int:
             panel_x = x - image_width
             if panel_x < 0:
                 return
+            if 35 <= y < 62:
+                _edit_resolution_dialog(config, camera)
+                return
             action = None
-            if 78 <= y < 112:
-                action = "exposure_down" if panel_x < 195 else "exposure_up"
-            elif 122 <= y < 156:
-                action = "gain_down" if panel_x < 195 else "gain_up"
-            elif 166 <= y < 200:
-                action = "white_balance_down" if panel_x < 195 else "white_balance_up"
-            elif 220 <= y < 254:
-                action = "auto_exposure"
-            elif 264 <= y < 298:
-                action = "auto_white_balance"
-            elif 320 <= y < 362:
-                save_request.append("save")
+            for index, (option, _label, _step) in enumerate(PARAM_ROWS):
+                row_y = 70 + index * 28
+                if row_y <= y < row_y + 34 and option in config.options:
+                    if 170 <= panel_x < 235:
+                        _edit_value_dialog(config, camera, option)
+                        return
+                    action = f"{option}_down" if panel_x < 195 else f"{option}_up"
+            base = 70 + len(PARAM_ROWS) * 28
+            if base <= y < base + 34: action = "auto_exposure"
+            elif base + 44 <= y < base + 78: action = "auto_white_balance"
+            elif base + 64 <= y < base + 98: _save_dialog(payload, camera_configs, cameras, args.name, purpose)
             try:
                 if action:
                     _apply_panel_action(action, config, camera)
@@ -215,19 +247,6 @@ def main(argv: list[str] | None = None) -> int:
                 config = config_by_name[name]
                 cv2.imshow(name, _render_window(image, config, purpose))
             key = cv2.waitKey(1) & 0xFF
-            if key == ord("i") and names:
-                try:
-                    name = names[0]
-                    _edit_from_terminal(config_by_name[name], cameras[name])
-                except (EOFError, KeyboardInterrupt):
-                    print("已取消直接输入。"); print()
-                continue
-            if key == ord("s"):
-                save_request.append("save")
-            if save_request:
-                save_request.clear()
-                save_from_panel()
-                continue
             if key in (ord("q"), 27):
                 break
     finally:

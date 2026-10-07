@@ -46,7 +46,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview 
   --name piper_x_balanced_fixed.parameters.json
 ```
 
-工具会读取 `configs/camera/` 中的分辨率、帧率、序列号和 options，并将参数应用到对应相机；按 `q` 或 `ESC` 退出。
+工具会读取 `configs/camera/` 中的分辨率、帧率、序列号和 options，并将参数应用到对应相机；按 `q` 或 `ESC` 退出。所有修改和保存均通过窗口完成，不使用命令行输入。
 
 预览窗口还支持运行时修改参数。先按 `Tab` 选择相机，再使用：
 
@@ -57,10 +57,8 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python -m tool.realsense_camera.saved_preview 
 | 鼠标点击白平衡 `- / +` | 白平衡减小 / 增大 |
 | 点击自动曝光 | 切换自动曝光 |
 | 点击自动白平衡 | 切换自动白平衡 |
-| 点击 Save as new file 或按 `s` | 在终端输入新文件名和 `purpose`，另存为新 JSON |
-| 按 `i` | 在终端直接输入参数数值 |
+| 点击 Save as new file | 弹出窗口输入新文件名和 `purpose`，另存为新 JSON |
+| 点击分辨率文本 | 弹出窗口修改宽度和高度并重启该相机流 |
 | `q` / `ESC` | 退出 |
 
-`s` 使用的是另存为逻辑，禁止使用当前源文件名，因此不会修改原参数文件。曝光步长为 10，增益步长为 1，白平衡步长为 100；修改会立即写入正在运行的相机，另存为时写入当前配置和画面参数。
-
-按 `i` 后，终端会依次询问当前参数；直接回车保持原值。自动曝光和自动白平衡请输入 `0` 或 `1`。
+另存为严格禁止使用当前源文件名，因此不会修改原参数文件。曝光步长为 10，增益步长为 1，白平衡步长为 100；点击参数数值区域可弹出窗口直接输入精确值，修改会立即写入正在运行的 RGB sensor。
