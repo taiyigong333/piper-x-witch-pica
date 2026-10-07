@@ -14,6 +14,7 @@ import numpy as np
 
 from taiyi_piper_x_collect.config import CameraConfig
 from taiyi_piper_x_collect.devices.realsense import RealSenseCamera
+from taiyi_piper_x_collect.errors import DeviceError
 
 
 def _parameter_path(name: str) -> Path:
@@ -231,8 +232,10 @@ def main(argv: list[str] | None = None) -> int:
                     action = f"{option}_down" if panel_x < 195 else f"{option}_up"
             base = 70 + len(PARAM_ROWS) * 28
             if base <= y < base + 34: action = "auto_exposure"
-            elif base + 44 <= y < base + 78: action = "auto_white_balance"
-            elif base + 64 <= y < base + 98: _save_dialog(payload, camera_configs, cameras, args.name, purpose)
+            elif base + 31 <= y < base + 56: action = "auto_white_balance"
+            elif base + 64 <= y < base + 98:
+                _save_dialog(payload, camera_configs, cameras, args.name, purpose)
+                return
             try:
                 if action:
                     _apply_panel_action(action, config, camera)
@@ -241,10 +244,28 @@ def main(argv: list[str] | None = None) -> int:
         for name in names:
             cv2.namedWindow(name, cv2.WINDOW_NORMAL)
             cv2.setMouseCallback(name, on_mouse, name)
+        last_images: dict[str, np.ndarray] = {}
+        failures = {name: 0 for name in names}
         while True:
             for name, camera in cameras.items():
-                image = np.asarray(camera.read().color).copy()
                 config = config_by_name[name]
+                try:
+                    image = np.asarray(camera.read().color).copy()
+                    last_images[name] = image
+                    failures[name] = 0
+                except DeviceError as error:
+                    failures[name] += 1
+                    image = last_images.get(name, np.zeros((config.height, config.width, 3), dtype=np.uint8)).copy()
+                    cv2.putText(image, f"等待 {name} 帧超时 ({failures[name]})", (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 80, 255), 2)
+                    if failures[name] >= 5:
+                        try:
+                            camera.stop()
+                            camera.start(capture_depth=False, apply_options=True)
+                            supported = camera.color_options(tuple(option for option, _label, _step in PARAM_ROWS) + ("enable_auto_exposure", "enable_auto_white_balance"))
+                            config.options.update(supported)
+                            failures[name] = 0
+                        except Exception as restart_error:
+                            cv2.putText(image, f"重启失败: {str(restart_error)[:42]}", (12, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 80, 255), 1)
                 cv2.imshow(name, _render_window(image, config, purpose))
             key = cv2.waitKey(1) & 0xFF
             if key in (ord("q"), 27):
