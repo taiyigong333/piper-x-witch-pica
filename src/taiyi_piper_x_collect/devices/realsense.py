@@ -152,15 +152,27 @@ class RealSenseCamera(CameraDevice):
         rs = self._sdk()
         option = self._resolve_option(rs, name)
         device = self._pipeline.get_active_profile().get_device()
-        candidates = []
+        named = []
+        capable = []
+        fallback = []
         for sensor in device.query_sensors():
             try:
                 key = getattr(rs.camera_info, "name")
                 sensor_name = str(sensor.get_info(key)) if sensor.supports(key) else ""
             except Exception:
                 sensor_name = ""
-            if ("rgb" in sensor_name.lower() or "color" in sensor_name.lower()) and sensor.supports(option):
-                candidates.append(sensor)
+            if sensor.supports(option):
+                fallback.append(sensor)
+                if "rgb" in sensor_name.lower() or "color" in sensor_name.lower():
+                    named.append(sensor)
+                try:
+                    awb = self._resolve_option(rs, "enable_auto_white_balance")
+                    wb = self._resolve_option(rs, "white_balance")
+                    if sensor.supports(awb) or sensor.supports(wb):
+                        capable.append(sensor)
+                except DeviceError:
+                    pass
+        candidates = named or capable or fallback
         if not candidates:
             raise DeviceError(f"{self._config.name} 未找到支持 {name} 的 RGB sensor")
         for sensor in candidates:
@@ -177,15 +189,26 @@ class RealSenseCamera(CameraDevice):
             raise DeviceError(f"RealSense {self._config.name} 尚未启动。")
         rs = self._sdk()
         device = self._pipeline.get_active_profile().get_device()
-        sensors = []
+        named = []
+        capable = []
+        fallback = []
         for sensor in device.query_sensors():
             try:
                 key = getattr(rs.camera_info, "name")
                 sensor_name = str(sensor.get_info(key)) if sensor.supports(key) else ""
             except Exception:
                 sensor_name = ""
+            fallback.append(sensor)
             if "rgb" in sensor_name.lower() or "color" in sensor_name.lower():
-                sensors.append(sensor)
+                named.append(sensor)
+            try:
+                awb = self._resolve_option(rs, "enable_auto_white_balance")
+                wb = self._resolve_option(rs, "white_balance")
+                if sensor.supports(awb) or sensor.supports(wb):
+                    capable.append(sensor)
+            except DeviceError:
+                pass
+        sensors = named or capable or fallback
         if not sensors:
             raise DeviceError(f"{self._config.name} 未找到 RGB/Color sensor")
         values: dict[str, float] = {}

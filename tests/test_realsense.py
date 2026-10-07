@@ -99,3 +99,19 @@ def test_automatic_options_ignore_manual_exposure_and_white_balance() -> None:
         "enable_auto_exposure": 1.0,
         "enable_auto_white_balance": 1.0,
     }
+
+
+def test_color_option_falls_back_to_sensor_with_white_balance_capability() -> None:
+    rs = SimpleNamespace(
+        option=SimpleNamespace(exposure="exposure", white_balance="white_balance", enable_auto_white_balance="awb"),
+        camera_info=SimpleNamespace(name="name"),
+    )
+    sensor = _FakeSensor("Stereo Module", {"exposure": 120.0, "white_balance": 4600.0, "awb": 0.0})
+    camera = object.__new__(RealSenseCamera)
+    camera._config = SimpleNamespace(name="camera_wrist_right")
+    camera._pipeline = SimpleNamespace(
+        get_active_profile=lambda: SimpleNamespace(get_device=lambda: _FakeDevice([sensor]))
+    )
+    camera._sdk = lambda: rs
+
+    assert camera.color_options(("exposure", "white_balance")) == {"exposure": 120.0, "white_balance": 4600.0}
