@@ -15,7 +15,13 @@ from .preflight import discover_realsense, preflight
 from .piper_x_state import read_piper_x_state
 from .quality import validate_hdf5
 from .teleop_processes import teleop_process_report, terminate_teleop_processes
-from .teleop_session import load_teleop_config, run_calibration, run_reverse_recording_session, run_sessions
+from .teleop_session import (
+    load_teleop_config,
+    run_calibration,
+    run_continuous_recording_session,
+    run_reverse_recording_session,
+    run_sessions,
+)
 from .trajectory_viewer import run_trajectory_viewer
 
 
@@ -47,6 +53,7 @@ def _parser() -> argparse.ArgumentParser:
     teleop_session.add_argument("--on-complete", choices=("save", "delete"), help="完成后直接保留或删除；未设时单键选择")
     teleop_session.add_argument("--repeat", action="store_true", help="本条处理后按空格开始下一条独立轨迹")
     teleop_session.add_argument("--reverse-recording", action="store_true", help="同一轮预热中连续录制正向和反向两段轨迹")
+    teleop_session.add_argument("--continuous-recording", action="store_true", help="不录制反向轨迹；保持 Pika ROS 和相机运行，连续录制多条单向轨迹")
     teleop_status = subparsers.add_parser("teleop-status", help="列出当前用户残留的 Pika 遥操进程")
     teleop_stop = subparsers.add_parser("teleop-stop", help="显式终止残留的 Pika 遥操进程")
     teleop_stop.add_argument("--terminate", action="store_true", help="执行终止；未提供时仅输出进程列表")
@@ -108,12 +115,18 @@ def main(argv: list[str] | None = None) -> int:
             run_trajectory_viewer(root=root, host=args.host, port=args.port)
             return 0
         if args.command == "teleop-session":
+            if args.reverse_recording and args.continuous_recording:
+                raise ConfigurationError("--reverse-recording 与 --continuous-recording 不能同时使用。")
+            if args.continuous_recording and args.repeat:
+                raise ConfigurationError("--continuous-recording 与 --repeat 不能同时使用。")
             configured_reverse = load_config(args.config).session.reverse_recording_enabled
-            reverse_recording = args.reverse_recording or configured_reverse
+            reverse_recording = args.reverse_recording or (configured_reverse and not args.continuous_recording)
             if reverse_recording and args.repeat:
                 raise ConfigurationError("--reverse-recording 与 --repeat 不能同时使用。")
             report = (
-                run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete, camera_config_path=args.camera_config)
+                run_continuous_recording_session(args.config, args.teleop_config, on_complete=args.on_complete, camera_config_path=args.camera_config)
+                if args.continuous_recording
+                else run_reverse_recording_session(args.config, args.teleop_config, on_complete=args.on_complete, camera_config_path=args.camera_config)
                 if reverse_recording
                 else run_sessions(args.config, args.teleop_config, duration_s=args.duration, on_complete=args.on_complete, repeat=args.repeat, camera_config_path=args.camera_config)
             )

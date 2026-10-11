@@ -460,6 +460,45 @@ def _wait_for_space(
     finally:
         termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
 
+def _wait_for_key(
+    message: str,
+    choices: dict[str, str],
+    *,
+    input_fn: Callable[[str], str],
+    output_fn: Callable[[str], None],
+    health_check: Callable[[], None] | None = None,
+) -> str:
+    labels = "; ".join(f"{label} 按 {key!r}" for key, label in choices.items())
+    output_fn(f"{message} {labels}")
+    if input_fn is not input:
+        try:
+            key = input_fn("")
+        except EOFError as error:
+            raise CollectionError("未收到按键，已取消会话。") from error
+        if key in choices:
+            return key
+        raise CollectionError(f"按键无效：{labels}。")
+    if not sys.stdin.isatty():
+        raise CollectionError("遥操会话需要交互式终端接收按键。")
+    file_descriptor = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(file_descriptor)
+    try:
+        tty.setraw(file_descriptor)
+        while True:
+            if health_check is not None:
+                health_check()
+            ready, _, _ = select.select([file_descriptor], [], [], 0.1)
+            if not ready:
+                continue
+            key = sys.stdin.read(1)
+            if key in choices:
+                output_fn("")
+                return key
+            if key == "\x03":
+                raise KeyboardInterrupt
+    finally:
+        termios.tcsetattr(file_descriptor, termios.TCSADRAIN, old_settings)
+
 
 def _preflight_or_raise(config: CollectConfig) -> None:
     report = preflight(config)
@@ -975,6 +1014,197 @@ def run_reverse_recording_session(
         output_fn(f"Pika ROS 关闭结果：{stage_summary or '无需关闭进程'}。")
 
 
+def run_continuous_recording_session(
+    config_path: str | Path,
+    teleop_config_path: str | Path,
+    *,
+    on_complete: str | None = None,
+    input_fn: Callable[[str], str] = input,
+    output_fn: Callable[[str], None] = print,
+    camera_config_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """保持 Pika ROS 和相机运行，连续录制多条单向轨迹。"""
+
+    config = load_config(config_path)
+    if camera_config_path:
+        config = replace(config, session=replace(config.session, camera_parameters_file=Path(camera_config_path).expanduser().resolve()))
+    teleop_config = load_teleop_config(teleop_config_path)
+    if on_complete is not None:
+        raise ConfigurationError("连续采集由现场按键决定保留或删除，不支持 --on-complete。")
+    _preflight_or_raise(config)
+    _wait_for_space("预检通过。请确认工作区安全；下一步将预热相机并移动至起始位姿。", input_fn=input_fn, output_fn=output_fn)
+    log_directory = config.session.output_root / "teleop_logs" / datetime.now().strftime("%Y%m%dT%H%M%S")
+    teleop = ExternalTeleop(teleop_config)
+    warmup = CameraWarmup(config)
+    cameras: dict[str, CameraDevice] = {}
+    collections: list[dict[str, Any]] = []
+    collectors: list[DataCollector] = []
+    pending: list[tuple[DataCollector, threading.Thread, dict[str, CollectionResult], dict[str, BaseException], Path, str]] = []
+    active: tuple[DataCollector, threading.Thread, threading.Event, threading.Event, dict[str, CollectionResult], dict[str, BaseException], Path] | None = None
+
+    def start_collection(collection_dir: Path) -> tuple[DataCollector, threading.Thread, threading.Event, threading.Event, dict[str, CollectionResult], dict[str, BaseException]]:
+        collector = DataCollector(config, prestarted_cameras=cameras)
+        collectors.append(collector)
+        stop_request = threading.Event()
+        capture_stopped = threading.Event()
+        result_box: dict[str, CollectionResult] = {}
+        error_box: dict[str, BaseException] = {}
+
+        def collect() -> None:
+            try:
+                result_box["result"] = collector.run(
+                    stop_request=stop_request,
+                    capture_stopped=capture_stopped,
+                    until_stopped=True,
+                    # 整个会话复用预热的 pipeline，避免每条轨迹反复触发 USB stop/start。
+                    keep_cameras_open=True,
+                    defer_sidecars=True,
+                    output_dir=collection_dir / "forward",
+                    trajectory_filename="trajectory.hdf5",
+                    trajectory_id=f"batch_{config.session.batch_tag}_{collection_dir.name}",
+                )
+            except BaseException as error:
+                error_box["error"] = error
+
+        thread = threading.Thread(target=collect, name=f"continuous-recording-{collection_dir.name}", daemon=True)
+        thread.start()
+        return collector, thread, stop_request, capture_stopped, result_box, error_box
+
+    def finish_collection(
+        item: tuple[DataCollector, threading.Thread, dict[str, CollectionResult], dict[str, BaseException], Path, str],
+    ) -> dict[str, Any]:
+        collector, thread, result_box, error_box, collection_dir, action = item
+        thread.join(timeout=30.0)
+        if thread.is_alive():
+            raise CollectionError("采集器未在 30 秒内完成 HDF5 写入。")
+        _raise_collection_error(error_box)
+        result = result_box.get("result")
+        if result is None:
+            raise CollectionError("采集未返回结果。")
+        collector.wait_background_tasks()
+        if action == "delete":
+            _delete_batch(collection_dir, config)
+        return {
+            "collection": collection_dir.name,
+            "collection_path": str(collection_dir),
+            "action": action,
+            "trajectory_id": result.trajectory_id,
+            "trajectory_path": str(result.trajectory_path),
+            "trajectory_length": result.writer_report.trajectory_length,
+        }
+
+    try:
+        warmup.start()
+        _move_to_initial_pose(config, output_fn)
+        teleop.run_pre_start()
+        teleop.start(log_directory)
+        _teleop_health_or_raise(teleop)
+        _wait_for_space(
+            "遥操已就绪。双击 Sense 夹爪启用遥操并确认跟随；之后在准备状态按空格开始采集。",
+            input_fn=input_fn,
+            output_fn=output_fn,
+            health_check=lambda: (warmup.raise_if_error(), _teleop_health_or_raise(teleop)),
+        )
+        cameras = warmup.handoff()
+        batch_dir = config.session.output_root / f"batch_{config.session.batch_tag}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        while True:
+            _wait_for_space(
+                "准备采集：确认场景就绪后按空格开始本条轨迹。",
+                input_fn=input_fn,
+                output_fn=output_fn,
+                health_check=lambda: _teleop_health_or_raise(teleop),
+            )
+            collection_dir = batch_dir / datetime.now().strftime("%Y%m%dT%H%M%S%f")
+            collector, thread, stop_request, capture_stopped, result_box, error_box = start_collection(collection_dir)
+            active = (collector, thread, stop_request, capture_stopped, result_box, error_box, collection_dir)
+            _, _, stop_request, capture_stopped, _, error_box, collection_dir = active
+            _wait_for_space(
+                "正在采集；本条动作完成后再次按空格结束本次采集。",
+                input_fn=input_fn,
+                output_fn=output_fn,
+                health_check=lambda: (_teleop_health_or_raise(teleop), _raise_collection_error(error_box)),
+            )
+            stop_request.set()
+            if not capture_stopped.wait(timeout=3.0):
+                raise CollectionError("采样线程未能在 3 秒内停止。")
+            active = None
+            choice = _wait_for_key(
+                f"本次采样已结束，HDF5 正在收尾：{collection_dir}。",
+                {" ": "保存并预备下一次", "q": "删除并预备下一次", "b": "结束采集并保存本次"},
+                input_fn=input_fn,
+                output_fn=output_fn,
+                health_check=lambda: _teleop_health_or_raise(teleop),
+            )
+            selected_action = "delete" if choice == "q" else "save"
+            if selected_action == "delete":
+                thread.join(timeout=30.0)
+                if thread.is_alive():
+                    raise CollectionError("采集器未在 30 秒内完成 HDF5 写入，拒绝删除。")
+                _raise_collection_error(error_box)
+                result = result_box.get("result")
+                if result is None:
+                    raise CollectionError("采集未返回结果，拒绝删除。")
+                collector.wait_background_tasks()
+                _delete_batch(collection_dir, config)
+            else:
+                pending.append((collector, thread, result_box, error_box, collection_dir, selected_action))
+            if choice == "b":
+                break
+            # 保存或删除后回到准备状态；上一条的质检 sidecar 可和下一条并行完成。
+        _wait_for_space("连续采集已结束。双击 Sense 夹爪停止遥操后按空格结束会话。", input_fn=input_fn, output_fn=output_fn)
+        while pending:
+            collectors_item = pending.pop(0)
+            collectors_item[1].join(timeout=30.0)
+            if collectors_item[1].is_alive():
+                raise CollectionError("采集器未在 30 秒内完成 HDF5 写入。")
+            _raise_collection_error(collectors_item[3])
+            result = collectors_item[2].get("result")
+            if result is None:
+                raise CollectionError("采集未返回结果。")
+            collectors_item[0].wait_background_tasks()
+            collections.append({
+                "collection": collectors_item[4].name,
+                "collection_path": str(collectors_item[4]),
+                "action": collectors_item[5],
+                "trajectory_id": result.trajectory_id,
+                "trajectory_path": str(result.trajectory_path),
+                "trajectory_length": result.writer_report.trajectory_length,
+            })
+        return {"result": "pass", "mode": "continuous_recording", "batch_tag": config.session.batch_tag, "collection_count": len(collections), "collections": collections}
+    finally:
+        if active is not None:
+            active[2].set()
+            active[3].wait(timeout=3.0)
+            active[1].join(timeout=30.0)
+            try:
+                active[0].wait_background_tasks()
+            except Exception as error:
+                output_fn(f"当前轨迹收尾失败：{error}")
+        for item in pending:
+            try:
+                finish_collection(item)
+            except Exception as error:
+                output_fn(f"连续采集收尾失败：{error}")
+        for collector in collectors:
+            try:
+                collector.wait_background_tasks()
+            except Exception as error:
+                output_fn(f"连续采集收尾失败：{error}")
+        for camera in cameras.values():
+            try:
+                camera.stop()
+            except Exception:
+                pass
+        warmup.close()
+        shutdown_report = teleop.stop()
+        stage_summary = "; ".join(
+            f"{stage['signal']} 等待 {stage['waited_s']:.1f}s，剩余 {','.join(stage['remaining']) or '无'}"
+            for stage in shutdown_report["stages"]
+        )
+        output_fn(f"Pika ROS 关闭结果：{stage_summary or '无需关闭进程'}。")
+
+
 def _parser() -> Any:
     import argparse
 
@@ -990,6 +1220,7 @@ def _parser() -> Any:
     session.add_argument("--on-complete", choices=("save", "delete"), help="完成后直接保留或删除；未设时单键选择")
     session.add_argument("--repeat", action="store_true", help="本条处理后按空格开始下一条独立轨迹")
     session.add_argument("--reverse-recording", action="store_true", help="同一轮预热中连续录制正向和反向两段轨迹")
+    session.add_argument("--continuous-recording", action="store_true", help="不录制反向轨迹；保持 Pika ROS 和相机运行，连续录制多条单向轨迹")
     return parser
 
 

@@ -114,6 +114,26 @@ def test_viewer_lists_any_existing_forward_or_reverse_trajectory(tmp_path: Path)
     assert reverse_summary["collection"] == "20260926T120000"
 
 
+def test_viewer_lists_batches_and_filters_trajectories_by_batch(tmp_path: Path) -> None:
+    original = _write_trajectory(tmp_path)
+    for batch_name, collection_name in (("batch_1", "capture_a"), ("batch_2", "capture_b")):
+        target = tmp_path / batch_name / collection_name / "forward" / "trajectory.hdf5"
+        target.parent.mkdir(parents=True)
+        target.write_bytes(original.read_bytes())
+
+    viewer = TrajectoryViewer(tmp_path)
+
+    assert viewer.list_batches() == [
+        {"name": "batch_2", "trajectory_count": 1},
+        {"name": "batch_1", "trajectory_count": 1},
+    ]
+    batch_paths = [item["path"] for item in viewer.list_trajectories("batch_1")]
+    assert len(batch_paths) == 1
+    assert batch_paths[0].startswith("batch_1/")
+    with pytest.raises(ValueError, match="batch"):
+        viewer.list_trajectories("../outside")
+
+
 def test_viewer_page_exposes_labeled_detailed_joint_and_tcp_charts() -> None:
     assert 'id="trajectory-previous"' in _PAGE
     assert 'id="trajectory-next"' in _PAGE

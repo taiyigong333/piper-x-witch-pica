@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import signal
+import threading
 import time
 
 from taiyi_piper_x_collect.collector import CollectionStats
@@ -198,6 +199,129 @@ def test_publish_reverse_recording_creates_missing_direction_and_migrates_legacy
     assert (collection / "forward" / "normal_trajectory.hdf5").read_bytes() == b"normal"
     assert (collection / "reverse").is_dir()
     assert not staging.exists()
+
+
+def test_continuous_recording_requires_start_end_and_review_keys(tmp_path: Path, monkeypatch) -> None:
+    config_path = Path(__file__).parents[1] / "configs" / "pass" / "mock_piper_x.yaml"
+    config = load_config(config_path)
+    config = replace(config, session=replace(config.session, output_root=tmp_path / "records"))
+    events: list[str] = []
+    next_started = threading.Event()
+    camera_names = [camera.name for camera in config.enabled_cameras]
+
+    class FakeCamera:
+        def __init__(self) -> None:
+            self.start_calls = 0
+            self.stop_calls = 0
+
+        def start(self, *, capture_depth: bool) -> None:
+            self.start_calls += 1
+            events.append("camera-start")
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+            events.append("camera-stop")
+
+    class FakeTeleop:
+        def __init__(self, _config) -> None:
+            pass
+
+        def run_pre_start(self) -> None:
+            pass
+
+        def start(self, _log_directory: Path) -> None:
+            events.append("teleop-start")
+
+        def return_codes(self) -> dict[str, int]:
+            return {}
+
+        def health_errors(self) -> dict[str, str]:
+            return {}
+
+        def stop(self) -> dict[str, object]:
+            events.append("teleop-stop")
+            return {"stages": []}
+
+    class FakeWarmup:
+        def __init__(self, _config) -> None:
+            self.cameras = {name: FakeCamera() for name in camera_names}
+
+        def start(self) -> None:
+            for camera in self.cameras.values():
+                camera.start(capture_depth=config.modalities.depth)
+
+        def handoff(self):
+            return self.cameras
+
+        def close(self) -> None:
+            pass
+
+        def raise_if_error(self) -> None:
+            pass
+
+    class FakeCollector:
+        call_count = 0
+
+        def __init__(self, _config, *, prestarted_cameras) -> None:
+            assert set(prestarted_cameras) == set(camera_names)
+            FakeCollector.call_count += 1
+            self.index = FakeCollector.call_count
+
+        def run(self, **kwargs):
+            assert kwargs["keep_cameras_open"] is True
+            events.append(f"capture-{self.index}-start")
+            if self.index == 2:
+                next_started.set()
+            kwargs["stop_request"].wait(timeout=2.0)
+            kwargs["capture_stopped"].set()
+            if self.index == 1:
+                assert next_started.wait(timeout=2.0)
+            output_dir = kwargs["output_dir"]
+            output_dir.mkdir(parents=True)
+            trajectory_path = output_dir / "trajectory.hdf5"
+            trajectory_path.write_bytes(b"fake")
+            events.append(f"writer-{self.index}-finish")
+            return teleop_session.CollectionResult(
+                trajectory_id=f"trajectory-{self.index}",
+                trajectory_path=trajectory_path,
+                quality_path=output_dir / "quality.json",
+                manifest_path=output_dir / "manifest.json",
+                stats=CollectionStats(),
+                writer_report=WriterReport(trajectory_path, 1, 1, 1),
+            )
+
+        def wait_background_tasks(self) -> None:
+            events.append(f"quality-{self.index}-finish")
+            pass
+
+    monkeypatch.setattr(teleop_session, "load_config", lambda _: config)
+    monkeypatch.setattr(teleop_session, "load_teleop_config", lambda _: object())
+    monkeypatch.setattr(teleop_session, "_preflight_or_raise", lambda _: None)
+    monkeypatch.setattr(teleop_session, "ExternalTeleop", FakeTeleop)
+    monkeypatch.setattr(teleop_session, "CameraWarmup", FakeWarmup)
+    monkeypatch.setattr(teleop_session, "_move_to_initial_pose", lambda *_: None)
+    monkeypatch.setattr(teleop_session, "DataCollector", FakeCollector)
+
+    def input_sequence():
+        for key in (" ", " ", " ", " ", " ", " ", " ", "b", " "):
+            yield key
+
+    answers = iter(input_sequence())
+    report = teleop_session.run_continuous_recording_session(
+        "collect.yaml",
+        "teleop.yaml",
+        input_fn=lambda _: next(answers),
+        output_fn=lambda _: None,
+    )
+
+    assert report["mode"] == "continuous_recording"
+    assert report["collection_count"] == 2
+    assert events.count("capture-1-start") == 1
+    assert events.count("capture-2-start") == 1
+    assert events.index("capture-2-start") < events.index("writer-1-finish")
+    assert events.count("camera-start") == len(camera_names)
+    assert events.count("camera-stop") == len(camera_names)
+    assert events[-1] == "teleop-stop"
 
 
 def test_camera_warmup_discards_frames_and_handoffs_open_cameras(monkeypatch) -> None:

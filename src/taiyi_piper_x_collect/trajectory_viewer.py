@@ -51,11 +51,30 @@ class TrajectoryViewer:
         if not self.root.is_dir():
             raise ValueError(f"轨迹数据根目录不存在或不是目录：{self.root}")
 
-    def list_trajectories(self) -> list[dict[str, Any]]:
+    def list_batches(self) -> list[dict[str, Any]]:
+        batches = []
+        for path in self.root.iterdir():
+            if not path.is_dir() or not path.name.startswith("batch_"):
+                continue
+            count = sum(
+                1 for trajectory in path.rglob("*.hdf5")
+                if trajectory.is_file() and trajectory.name in _TRAJECTORY_NAMES
+            )
+            batches.append({"name": path.name, "trajectory_count": count})
+        return sorted(batches, key=lambda item: item["name"], reverse=True)
+
+    def list_trajectories(self, batch: str | None = None) -> list[dict[str, Any]]:
         """返回可打开轨迹，按最近修改时间倒序，且忽略未完成的 partial 文件。"""
 
+        search_root = self.root
+        if batch is not None:
+            if Path(batch).name != batch or not batch.startswith("batch_"):
+                raise ValueError("batch 必须是数据根目录下的 batch 名称。")
+            search_root = (self.root / batch).resolve()
+            if search_root.parent != self.root or not search_root.is_dir():
+                raise ValueError(f"不存在 batch：{batch}")
         paths = sorted(
-            (path for path in self.root.rglob("*.hdf5") if path.is_file() and path.name in _TRAJECTORY_NAMES),
+            (path for path in search_root.rglob("*.hdf5") if path.is_file() and path.name in _TRAJECTORY_NAMES),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -190,7 +209,15 @@ def _handler_for(viewer: TrajectoryViewer) -> type[BaseHTTPRequestHandler]:
                     return
                 query = parse_qs(parsed.query)
                 if parsed.path == "/api/trajectories":
-                    self._send_json({"root": str(viewer.root), "trajectories": viewer.list_trajectories()})
+                    self._send_json({
+                        "root": str(viewer.root),
+                        "batches": viewer.list_batches(),
+                        "trajectories": (
+                            viewer.list_trajectories(query["batch"][0])
+                            if query.get("batch", [None])[0]
+                            else []
+                        ),
+                    })
                     return
                 if parsed.path == "/api/trajectory":
                     self._send_json(viewer.read_trajectory(_query_value(query, "path")))
@@ -322,7 +349,7 @@ h1 { margin: 0; font-size: 20px; font-weight: 700; }
 .quiet { color: #60707d; }
 header .quiet { color: #c9d5df; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 main { max-width: 1580px; margin: 0 auto; padding: 20px clamp(16px, 3vw, 40px) 40px; }
-.toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 12px; align-items: center; margin-bottom: 16px; }
+.toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 2fr) auto auto; gap: 12px; align-items: center; margin-bottom: 16px; }
 select { width: 100%; min-width: 0; height: 38px; background: #ffffff; border: 1px solid #aebbc5; border-radius: 4px; padding: 0 10px; color: #18212b; }
 button { min-width: 38px; min-height: 38px; border: 1px solid #256e79; border-radius: 4px; padding: 0 13px; background: #0e7c86; color: #ffffff; }
 button:hover { background: #086773; }
@@ -380,7 +407,7 @@ canvas { display: block; width: 100%; height: 190px; background: #fbfcfd; border
 <body>
 <header><h1>Piper 轨迹查看器</h1><span id="root" class="quiet"></span></header>
 <main>
-  <div class="toolbar"><button id="trajectory-previous" type="button" title="查看上一条轨迹" aria-label="查看上一条轨迹">上一条轨迹</button><select id="trajectory" aria-label="选择轨迹"></select><button id="trajectory-next" type="button" title="查看下一条轨迹" aria-label="查看下一条轨迹">下一条轨迹</button><button id="refresh" type="button">刷新列表</button></div>
+  <div class="toolbar"><select id="batch" aria-label="选择 batch"><option value="">先选择 batch</option></select><button id="trajectory-previous" type="button" title="查看上一条轨迹" aria-label="查看上一条轨迹">上一条轨迹</button><select id="trajectory" aria-label="选择轨迹" disabled></select><button id="trajectory-next" type="button" title="查看下一条轨迹" aria-label="查看下一条轨迹">下一条轨迹</button><button id="refresh" type="button">刷新列表</button></div>
   <p id="status" class="status" role="status"></p>
   <section id="content" hidden>
     <div class="summary">
@@ -451,9 +478,20 @@ function renderLegend(id, labels, columns) {
 async function refreshList() {
   const button = byId("refresh"); button.disabled = true; setStatus("");
   try {
-    const payload = await request("/api/trajectories");
-    state.list = payload.trajectories; byId("root").textContent = payload.root;
+    const batch = byId("batch").value;
+    const payload = await request("/api/trajectories" + (batch ? `?batch=${encodeURIComponent(batch)}` : ""));
+    byId("root").textContent = payload.root;
+    if (!batch) {
+      const batchSelect = byId("batch"); batchSelect.replaceChildren(new Option("先选择 batch", ""));
+      for (const item of payload.batches) batchSelect.add(new Option(`${item.name} | ${item.trajectory_count} 条轨迹`, item.name));
+      state.list = []; byId("trajectory").replaceChildren(); byId("trajectory").disabled = true;
+      byId("content").hidden = true; byId("empty").hidden = true;
+      setStatus(payload.batches.length ? "请先选择 batch，再查看其中轨迹。" : "没有可查看的 batch。");
+      return;
+    }
+    state.list = payload.trajectories;
     const select = byId("trajectory"); select.replaceChildren();
+    select.disabled = state.list.length === 0;
     for (const item of state.list) {
       const option = document.createElement("option"); option.value = item.path;
       const quality = item.quality_result ? ` | 质检 ${item.quality_result}` : "";
@@ -475,6 +513,7 @@ function updateTrajectoryNavigation() {
   byId("trajectory-previous").disabled = !canNavigate || currentIndex === 0;
   byId("trajectory-next").disabled = !canNavigate || currentIndex === state.list.length - 1;
   byId("trajectory").disabled = state.loadingTrajectory || state.list.length === 0;
+  byId("batch").disabled = state.loadingTrajectory;
 }
 
 async function loadTrajectory(path) {
@@ -598,6 +637,7 @@ function drawChart(canvas, series, unit, columns) {
 }
 
 byId("refresh").addEventListener("click", refreshList);
+byId("batch").addEventListener("change", refreshList);
 byId("trajectory").addEventListener("change", (event) => loadTrajectory(event.target.value));
 byId("trajectory-previous").addEventListener("click", () => loadAdjacentTrajectory(-1));
 byId("trajectory-next").addEventListener("click", () => loadAdjacentTrajectory(1));

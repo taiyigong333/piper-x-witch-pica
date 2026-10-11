@@ -114,3 +114,15 @@ def test_collection_reuses_prestarted_cameras_without_restart(tmp_path: Path) ->
     assert result.writer_report.trajectory_length > 0
     assert all(camera.start_calls == 1 for camera in cameras.values())
     assert all(not camera._started for camera in cameras.values())
+
+
+def test_collection_can_defer_quality_sidecars_until_background_completion(tmp_path: Path) -> None:
+    config = load_config(_mock_config(tmp_path))
+    collector = DataCollector(config)
+
+    result = collector.run(duration_s=0.3, defer_sidecars=True)
+
+    assert result.trajectory_path.exists()
+    collector.wait_background_tasks()
+    assert result.quality_path.exists()
+    assert result.manifest_path.exists()

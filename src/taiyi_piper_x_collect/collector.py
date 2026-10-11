@@ -24,6 +24,9 @@ from .quality import create_manifest, write_quality_report
 from .writer import WriterReport, WriterSchema, writer_worker
 
 
+_BATCH_PARAMETERS_LOCK = threading.Lock()
+
+
 @dataclass
 class CollectionStats:
     raw_robot_states: int = 0
@@ -113,6 +116,19 @@ class DataCollector:
                 f"期望 {sorted(expected_names)}，实际 {sorted(prestarted_cameras)}。"
             )
         self._prestarted_cameras = prestarted_cameras
+        self.background_errors: list[BaseException] = []
+        self._background_threads: list[threading.Thread] = []
+
+    def wait_background_tasks(self) -> None:
+        """等待延后的质检侧文件写入，并把错误带回会话主线程。"""
+
+        for thread in self._background_threads:
+            thread.join(timeout=30.0)
+            if thread.is_alive():
+                raise CollectionError("轨迹质检文件未在 30 秒内完成写入。")
+        if self.background_errors:
+            error = self.background_errors[0]
+            raise CollectionError(f"轨迹质检文件写入失败：{type(error).__name__}: {error}") from error
 
     def run(
         self,
@@ -125,14 +141,15 @@ class DataCollector:
         output_dir: Path | None = None,
         trajectory_filename: str = "trajectory.hdf5",
         trajectory_id: str | None = None,
+        defer_sidecars: bool = False,
     ) -> CollectionResult:
         """执行一次采集。
 
         常规 ``collect`` 使用有限时长，保持原有接口语义。遥操会话由外部人工结束，
         因此可传入 ``stop_request`` 并设置 ``until_stopped=True``；这样只有操作员
         已停止遥操后，编排层才会请求采集器收尾并发布正式数据包。可选的
-        ``capture_stopped`` 会在相机/机器人工作线程全部退出后置位，此时不会
-        再有新的采样进入 HDF5 队列，但 HDF5 收尾和质量文件可能仍在进行。
+        ``capture_stopped`` 会在采样线程停止、机器人关闭且相机按策略释放后置位；
+        此时可以安全开始下一段，但 HDF5 收尾和质量文件可能仍在进行。
         ``keep_cameras_open`` 用于连续分段录制：本次轨迹结束后保留相机句柄，
         由外层会话在所有分段完成后统一关闭。
         """
@@ -152,22 +169,23 @@ class DataCollector:
         parameters_digest = camera_parameters_digest(parameters_payload)
         batch_dir.mkdir(parents=True, exist_ok=True)
         batch_parameters_path = batch_dir / "camera_parameters.json"
-        if batch_parameters_path.exists():
-            try:
-                stored_payload = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
-                stored_digest = str(stored_payload["digest"])
-            except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
-                raise CollectionError(f"批次相机参数文件损坏，拒绝采集：{batch_parameters_path}") from error
-            if stored_digest != parameters_digest:
-                raise CollectionError(
-                    f"相机参数与批次不一致，拒绝采集：{batch_parameters_path}；"
-                    f"当前 {parameters_digest}，批次 {stored_digest}。"
+        with _BATCH_PARAMETERS_LOCK:
+            if batch_parameters_path.exists():
+                try:
+                    stored_payload = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
+                    stored_digest = str(stored_payload["digest"])
+                except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+                    raise CollectionError(f"批次相机参数文件损坏，拒绝采集：{batch_parameters_path}") from error
+                if stored_digest != parameters_digest:
+                    raise CollectionError(
+                        f"相机参数与批次不一致，拒绝采集：{batch_parameters_path}；"
+                        f"当前 {parameters_digest}，批次 {stored_digest}。"
+                    )
+            else:
+                batch_parameters_path.write_text(
+                    json.dumps({"digest": parameters_digest, "source": str(self.config.session.camera_parameters_file or "embedded"), "parameters": parameters_payload}, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
                 )
-        else:
-            batch_parameters_path.write_text(
-                json.dumps({"digest": parameters_digest, "source": str(self.config.session.camera_parameters_file or "embedded"), "parameters": parameters_payload}, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
         if Path(trajectory_filename).name != trajectory_filename or not trajectory_filename.endswith(".hdf5"):
             raise CollectionError("trajectory_filename 必须是当前目录下的 .hdf5 文件名。")
         trajectory_path = trajectory_dir / trajectory_filename
@@ -222,13 +240,14 @@ class DataCollector:
                 for camera in cameras.values():
                     camera.start(capture_depth=self.config.modalities.depth)
             # 设备启动后读取实际生效的 option，和输入参数一起保存到批次文件。
-            batch_record = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
-            batch_record["devices"] = {name: camera.parameters() for name, camera in cameras.items()}
-            save_camera_runtime_parameters(self.config.session.camera_parameters_file, batch_record["devices"])
-            batch_record["parameters"] = camera_parameters_payload(self.config)
-            batch_parameters_path.write_text(
-                json.dumps(batch_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-            )
+            with _BATCH_PARAMETERS_LOCK:
+                batch_record = json.loads(batch_parameters_path.read_text(encoding="utf-8"))
+                batch_record["devices"] = {name: camera.parameters() for name, camera in cameras.items()}
+                save_camera_runtime_parameters(self.config.session.camera_parameters_file, batch_record["devices"])
+                batch_record["parameters"] = camera_parameters_payload(self.config)
+                batch_parameters_path.write_text(
+                    json.dumps(batch_record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+                )
             robot.start()
             if gripper is not None:
                 gripper.start()
@@ -335,8 +354,6 @@ class DataCollector:
             alive_workers = [worker.name for worker in workers if worker.is_alive()]
             if alive_workers and primary_error is None:
                 primary_error = CollectionError(f"采集线程未能及时停止：{', '.join(alive_workers)}")
-            if capture_stopped is not None and not alive_workers:
-                capture_stopped.set()
             if gripper is not None:
                 try:
                     gripper.stop()
@@ -353,6 +370,10 @@ class DataCollector:
                         camera.stop()
                     except Exception:
                         pass
+            # 只有机器人已停止、相机句柄已按本段策略处理完，下一段才可以安全复用设备；
+            # 此时写进程仍可能在后台完成 HDF5 收尾，连续模式可以与它并行。
+            if capture_stopped is not None and not alive_workers:
+                capture_stopped.set()
 
             if writer_process is not None:
                 if primary_error is None:
@@ -389,8 +410,25 @@ class DataCollector:
         sidecar_prefix = trajectory_path.stem if trajectory_path.stem != "trajectory" else ""
         quality_name = f"{sidecar_prefix}_quality.json" if sidecar_prefix else "quality.json"
         manifest_name = f"{sidecar_prefix}_manifest.json" if sidecar_prefix else "manifest.json"
-        quality_path = write_quality_report(trajectory_path, self.config, stats, output_name=quality_name)
-        manifest_path = create_manifest(trajectory_path, quality_path, trajectory_id, self.config, output_name=manifest_name)
+        quality_path = trajectory_path.with_name(quality_name)
+        manifest_path = trajectory_path.with_name(manifest_name)
+
+        def write_sidecars() -> None:
+            try:
+                written_quality = write_quality_report(trajectory_path, self.config, stats, output_name=quality_name)
+                create_manifest(trajectory_path, written_quality, trajectory_id, self.config, output_name=manifest_name)
+            except BaseException as error:
+                self.background_errors.append(error)
+
+        if defer_sidecars:
+            sidecar_thread = threading.Thread(target=write_sidecars, name=f"quality-{trajectory_path.stem}", daemon=True)
+            self._background_threads.append(sidecar_thread)
+            sidecar_thread.start()
+        else:
+            write_sidecars()
+            if self.background_errors:
+                error = self.background_errors[0]
+                raise CollectionError(f"轨迹质检文件写入失败：{type(error).__name__}: {error}") from error
         return CollectionResult(trajectory_id, trajectory_path, quality_path, manifest_path, stats, writer_report)
 
     def _make_trajectory_id(self) -> str:
